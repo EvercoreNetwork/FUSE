@@ -20,11 +20,12 @@ if not NEXAURA_MNT.exists():
     else:
         NEXAURA_MNT = HOME / "NEXAURA"
 
+DEVELOPER = NEXAURA_MNT / "DEVELOPER"
 # --- Settings (persistent) ---
 SETTINGS_DIR = HOME / ".config" / "nexaura-fuse"
 SETTINGS_PATH = SETTINGS_DIR / "settings.json"
 DEFAULT_SETTINGS = {
-    "developer_path": str(NEXAURA_MNT / "DEVELOPER"),
+    "developer_path": str(DEVELOPER),
     "run_on_startup": True,
     "start_minimized": False,
     "tray_custom_popup": True,  # Linux X11 custom tray vs native menu
