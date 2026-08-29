@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="oc-2" data-color-scheme="dark">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>NEXAURA FUSE</title>
+<style>
+  :root{
+    --grey-1200:#080808; --grey-1100:#161616; --grey-1000:#242424; --grey-900:#2e2e2e; --grey-800:#3a3a3a;
+    --text-base:#f2f2f2; --text-muted:#aeaeae; --text-faint:#5c5c5c;
+    --border:#ffffff14; --border-strong:#ffffff1f; --hover:#ffffff0f;
+    --success:#6bd586; --bg-base:var(--grey-1100); --bg-deep:var(--grey-1200);
+    --layer-01:var(--grey-1000); --layer-02:var(--grey-900);
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: ui-monospace, "JetBrains Mono", Menlo, monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:transparent}
+  body{
+    display:flex;flex-direction:column;height:100vh;width:100vw;
+    background:var(--bg-deep);color:var(--text-base);font-family:var(--font-sans);
+    overflow:hidden;border-radius:12px; /* rounded window */
+  }
+  /* titlebar - single, frameless, right-aligned tabs, light status */
+  .titlebar{
+    height:36px;display:flex;align-items:center;justify-content:space-between;
+    padding:0 8px 0 14px;gap:12px;background:var(--layer-01);
+    border-bottom:1px solid var(--border);position:relative;z-index:10;user-select:none;
+    border-radius:12px 12px 0 0;
+  }
+  .titlebar-drag{position:absolute;inset:0;z-index:0}
+  .brand{position:relative;z-index:1;display:flex;align-items:center;gap:10px}
+  .spark{width:18px;height:18px;display:grid;place-items:center;animation:sparkPulse 3s ease-in-out infinite}
+  .spark svg{width:18px;height:18px}
+  @keyframes sparkPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+  .brand-text{line-height:1}
+  .brand-title{font-size:12.5px;font-weight:650;letter-spacing:-.02em;color:#fff}
+  .brand-sub{font-size:9px;font-weight:600;letter-spacing:.08em;color:var(--text-faint);text-transform:uppercase}
+  .titlebar-right{position:relative;z-index:1;display:flex;align-items:center;gap:12px;margin-left:auto}
+  .tabs{display:flex;align-items:center;gap:4px}
+  .tab{height:22px;padding:0 10px;display:flex;align-items:center;font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--text-muted);border-radius:6px;cursor:pointer;transition:all .15s;border:1px solid transparent}
+  .tab:hover{color:#fff;background:var(--hover)}
+  .tab.active{background:#fff;color:#161616;box-shadow:0 1px 3px #0006}
+  .status-compact{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:500;color:var(--text-muted);white-space:nowrap;letter-spacing:.02em}
+  .status-compact strong{color:#fff;font-weight:600}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--success);box-shadow:0 0 8px #6bd58688;animation:dotPulse 2s infinite;flex-shrink:0}
+  @keyframes dotPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.2)}}
+  .win-btns{display:flex;gap:4px}
+  .wbtn{width:26px;height:26px;border-radius:6px;border:1px solid transparent;background:transparent;color:var(--text-muted);display:grid;place-items:center;cursor:pointer;transition:all .12s}
+  .wbtn:hover{background:var(--hover);color:#fff;border-color:var(--border)}
+  .wbtn.close:hover{background:#e81123;color:#fff;border-color:#e81123}
+  .wbtn svg{width:14px;height:14px;stroke-width:1.8}
+  .shell{display:flex;flex:1;overflow:hidden;position:relative;z-index:1;background:var(--bg-base);border-radius:0 0 12px 12px;overflow:hidden}
+  .sidebar{width:220px;min-width:220px;background:var(--bg-base);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:10px 8px;gap:18px;overflow-y:auto}
+  .sidebar::-webkit-scrollbar{width:4px} .sidebar::-webkit-scrollbar-thumb{background:#ffffff12;border-radius:4px}
+  .nav-section{display:flex;flex-direction:column;gap:4px}
+  .nav-title{font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--text-faint);text-transform:uppercase;padding:6px 8px 2px}
+  .nav-item{height:30px;display:flex;align-items:center;gap:9px;padding:0 8px;border-radius:6px;font-size:12.5px;font-weight:500;color:var(--text-muted);cursor:pointer;transition:all .14s;border:1px solid transparent}
+  .nav-item svg{width:14px;height:14px;stroke-width:1.8;flex-shrink:0;opacity:.9}
+  .nav-item:hover{background:var(--hover);color:#fff}
+  .nav-item.active{background:var(--layer-01);color:#fff;border-color:var(--border);box-shadow:0 1px 2px #0005}
+  .nav-count{margin-left:auto;font-size:11px;font-weight:700;background:var(--layer-02);color:var(--text-muted);padding:1px 6px;border-radius:999px;border:1px solid var(--border);min-width:20px;text-align:center}
+  .nav-item.active .nav-count{background:#fff;color:#161616;border-color:#fff}
+  .sidebar-foot{margin-top:auto;padding-top:10px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
+  .btn-primary{height:32px;display:flex;align-items:center;justify-content:center;gap:7px;background:#fff;color:#161616;border:none;border-radius:8px;font-size:12.5px;font-weight:650;cursor:pointer;transition:all .15s;box-shadow:0 1px 3px #0006}
+  .btn-primary:hover{transform:translateY(-1px);box-shadow:0 4px 12px #0005}
+  .btn-ghost{height:30px;display:flex;align-items:center;justify-content:center;gap:6px;background:var(--layer-01);color:var(--text-base);border:1px solid var(--border);border-radius:8px;font-size:12px;font-weight:500;cursor:pointer;transition:all .14s}
+  .btn-ghost:hover{background:var(--layer-02);border-color:var(--border-strong)}
+  .main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg-base);min-width:0}
+  .main-head{height:38px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;gap:12px;border-bottom:1px solid var(--border);background:var(--bg-base);flex-shrink:0}
+  .main-title{font-size:12.5px;font-weight:650;color:#fff;display:flex;align-items:center;gap:6px}
+  .main-title em{font-style:normal;font-weight:400;color:var(--text-muted);font-size:11.5px}
+  .search{height:26px;display:flex;align-items:center;gap:7px;padding:0 9px;background:var(--layer-01);border:1px solid var(--border);border-radius:8px;color:var(--text-muted);font-size:12px;width:220px;transition:all .15s}
+  .search:focus-within{border-color:#ffffff22;background:var(--layer-02)}
+  .search svg{width:14px;height:14px;opacity:.7;flex-shrink:0}
+  .search input{background:transparent;border:none;outline:none;color:#fff;font-size:12px;width:100%;font-family:var(--font-sans)}
+  .search input::placeholder{color:var(--text-faint)}
+  .content{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+  .content::-webkit-scrollbar{width:6px} .content::-webkit-scrollbar-thumb{background:#ffffff12;border-radius:4px}
+  .view{display:none;flex-direction:column;gap:10px}
+  .view.active{display:flex;animation:viewIn .2s cubic-bezier(.16,1,.3,1)}
+  @keyframes viewIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+  .summary{height:34px;display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--layer-01);border:1px solid var(--border);border-radius:8px;font-size:11.5px;color:var(--text-muted)}
+  .summary strong{color:#fff;font-weight:650}
+  .sep{width:1px;height:14px;background:var(--border);margin:0 4px}
+  .list{display:flex;flex-direction:column;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .row{height:42px;display:flex;align-items:center;gap:10px;padding:0 10px 0 12px;background:var(--layer-01);transition:background .12s}
+  .row:hover{background:var(--layer-02)}
+  .row-icon{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:var(--bg-deep);border:1px solid var(--border);font-size:10px;font-weight:700;color:var(--text-muted);flex-shrink:0}
+  .row-icon.merged{background:#fff;color:#161616;border-color:#fff}
+  .row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+  .row-name{font-size:12.5px;font-weight:600;color:#fff;line-height:1;letter-spacing:-.01em}
+  .row-path{font-size:11px;color:var(--text-faint);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* pill + actions sliding - pill far right, slides away on hover */
+  .row-meta{position:relative;display:flex;align-items:center;gap:8px;flex-shrink:0;width:158px;justify-content:flex-end;overflow:visible;height:28px}
+  .pill{position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:4px 8px;border-radius:999px;border:1px solid var(--border);line-height:1;background:var(--success);color:#0a1a0f;border-color:var(--success);transition:all .30s cubic-bezier(.16,1,.3,1);white-space:nowrap;z-index:1}
+  .row-actions{position:absolute;right:0;top:50%;transform:translateY(-50%) translateX(10px);display:flex;gap:6px;opacity:0;pointer-events:none;transition:all .30s cubic-bezier(.16,1,.3,1)}
+  .row:hover .pill{transform:translateY(-50%) translateX(-108px);opacity:0;pointer-events:none}
+  .row:hover .row-actions{transform:translateY(-50%) translateX(0);opacity:1;pointer-events:auto}
+  .icon-btn{height:26px;padding:0 9px;min-width:54px;border-radius:6px;border:1px solid var(--border);background:var(--bg-deep);color:var(--text-base);display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;font-weight:600;cursor:pointer;transition:all .12s;white-space:nowrap}
+  .icon-btn:hover{background:#fff;color:#161616;border-color:#fff;transform:translateY(-1px);box-shadow:0 2px 8px #0003}
+  .icon-btn svg{width:12px;height:12px;stroke-width:1.8}
+  .icon-btn.reveal{background:transparent;color:var(--text-muted)}
+  .icon-btn.reveal:hover{background:var(--hover);color:#fff}
+</style>
+</head>
+<body>
+<div class="titlebar" id="titlebar">
+  <div class="titlebar-drag" id="drag-region"></div>
+  <div class="brand">
+    <div class="spark"><svg viewBox="0 0 100 100"><path d="M50 7 L57 32 L84 42 L57 57 L50 84 L42 57 L16 42 L42 32 Z" fill="white"/><circle cx="50" cy="45" r="8" fill="white"/></svg></div>
+    <div class="brand-text"><div class="brand-title">NEXAURA FUSE</div><div class="brand-sub">DEVELOPER • SINGLETON</div></div>
+  </div>
+  <div class="titlebar-right">
+    <div class="tabs" id="tabs">
+      <div class="tab active" data-view="apps">APPS</div>
+      <div class="tab" data-view="models">MODELS</div>
+      <div class="tab" data-view="developer">DEVELOPER</div>
+    </div>
+    <div class="status-compact"><span class="dot"></span> <span id="status-text">45GB free • 1 model • 14 merged</span></div>
+    <div class="win-btns">
+      <button class="wbtn" id="min-btn" title="Minimize"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M4 8H12"/></svg></button>
+      <button class="wbtn close" id="close-btn" title="Hide"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M5 5L11 11M11 5L5 11"/></svg></button>
+    </div>
+  </div>
+</div>
+
+<div class="shell">
+  <aside class="sidebar">
+    <div class="nav-section">
+      <div class="nav-title">Workspace</div>
+      <div class="nav-item active" data-view="apps"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><rect x="2" y="3" width="12" height="10" rx="1.2"/><path d="M2 5H14"/></svg> All Apps <span class="nav-count" id="count-merged">14</span></div>
+      <div class="nav-item" data-view="models"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M8 2L13 4.5V11.5L8 14L3 11.5V4.5L8 2Z"/><path d="M8 14V8"/><path d="M3 4.5L8 8L13 4.5"/></svg> SHARED / MODELS <span class="nav-count" id="count-models">1</span></div>
+      <div class="nav-item" data-view="developer"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M3 3H13V13H3z"/><path d="M3 6H13M6 13V6"/></svg> DEVELOPER</div>
+      <div class="nav-item" data-view="logs"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M3 4H13M3 8H13M3 12H9"/></svg> Logs</div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-title">Providers</div>
+      <div class="nav-item" data-provider="opencode"><svg width="8" height="8"><circle cx="4" cy="4" r="3" fill="currentColor"/></svg> OpenCode</div>
+      <div class="nav-item" data-provider="ollama"><svg width="8" height="8"><circle cx="4" cy="4" r="3" fill="#6bd586"/></svg> Ollama</div>
+      <div class="nav-item" data-provider="lmstudio"><svg width="8" height="8"><circle cx="4" cy="4" r="3" fill="#aeaeae"/></svg> LMStudio</div>
+    </div>
+    <div class="sidebar-foot">
+      <button class="btn-primary" id="merge-all"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M8 2L9.5 6.5L14 8L9.5 9.5L8 14L6.5 9.5L2 8L6.5 6.5Z"/></svg> Merge all</button>
+      <button class="btn-ghost" id="open-dev">Open DEVELOPER</button>
+      <button class="btn-ghost" id="sync-models">Sync models</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="main-head">
+      <div class="main-title" id="main-title">APPS <em>— 14 symlinked to /mnt/NEXAURA/DEVELOPER</em></div>
+      <label class="search"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><circle cx="7" cy="7" r="4"/><path d="M10 10L13 13"/></svg><input id="search" placeholder="Search apps…"/></label>
+    </div>
+    <div class="content" id="content">
+      <div class="view active" id="view-apps">
+        <div class="summary"><strong id="stat-apps">14 / 14</strong> apps merged <span class="sep"></span> <span id="stat-disk">45GB free</span> • 101.7G NTFS <span class="sep"></span> <span id="stat-models">1 GGUF</span> • 7.0GB</div>
+        <div class="list" id="app-list"></div>
+      </div>
+      <div class="view" id="view-models">
+        <div class="summary"><strong>SHARED / MODELS</strong> — /mnt/NEXAURA/DEVELOPER/SHARED/MODELS</div>
+        <div class="list" id="models-list"></div>
+      </div>
+      <div class="view" id="view-developer">
+        <div class="summary"><strong>DEVELOPER</strong> — /mnt/NEXAURA/DEVELOPER</div>
+        <div class="list" id="dev-list"></div>
+      </div>
+      <div class="view" id="view-logs">
+        <div class="summary"><strong>Logs</strong> — /tmp/nexaura-fuse.log</div>
+        <div class="list" style="padding:14px;background:var(--layer-01);font-family:var(--font-mono);font-size:11px;color:var(--text-muted)" id="logs-view">Select an app and use Open / Reveal. Logs removed — check /tmp/nexaura-fuse.log for details.</div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const APPS=["claude","opencode","opencode-share","opencode-cache","opencode-desktop","zcode","zcode-share","jetbrains-config","jetbrains-share","jetbrains-cache","lmstudio","codex","gemini","projects"];
+const META={claude:{icon:"C",path:"~/.config/Claude"},opencode:{icon:"OC",path:"~/.config/opencode"},"opencode-share":{icon:"OC",path:"~/.local/share/opencode"},"opencode-cache":{icon:"OC",path:"~/.cache/opencode"},"opencode-desktop":{icon:"OC",path:"~/.config/ai.opencode.desktop"},zcode:{icon:"ZC",path:"~/.config/ZCode"},"zcode-share":{icon:"ZC",path:"~/.zcode"},"jetbrains-config":{icon:"JB",path:"~/.config/JetBrains"},"jetbrains-share":{icon:"JB",path:"~/.local/share/JetBrains"},"jetbrains-cache":{icon:"JB",path:"~/.cache/JetBrains"},lmstudio:{icon:"LM",path:"LMStudio"},codex:{icon:"CX",path:"~/.codex"},gemini:{icon:"GM",path:"~/.gemini"},projects:{icon:"PJ",path:"~/Documents"}};
+let status={disk:"45GB free",models:1,apps_merged:14},currentView="apps";
+function setView(v){
+  currentView=v;
+  document.querySelectorAll(".view").forEach(e=>e.classList.remove("active"));
+  const el=document.getElementById("view-"+v);
+  if(el) el.classList.add("active");
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t.dataset.view===v));
+  document.querySelectorAll(".nav-item[data-view]").forEach(n=>n.classList.toggle("active",n.dataset.view===v));
+  const t={apps:"APPS",models:"SHARED / MODELS",developer:"DEVELOPER",logs:"Logs"};
+  document.getElementById("main-title").innerHTML=`${t[v]||v.toUpperCase()} <em>— ${v==="apps"?"14 symlinked to /mnt/NEXAURA/DEVELOPER":v==="models"?"/mnt/NEXAURA/DEVELOPER/SHARED/MODELS":v==="developer"?"/mnt/NEXAURA/DEVELOPER":"/tmp/nexaura-fuse.log"}</em>`;
+  if(v==="models") renderModels();
+  if(v==="developer") renderDevel();
+}
+function renderApps(filter=""){
+  const list=document.getElementById("app-list"); list.innerHTML="";
+  APPS.filter(a=>!filter||a.includes(filter.toLowerCase())).forEach(app=>{
+    const m=META[app]||{icon:"•",path:app};
+    const row=document.createElement("div"); row.className="row";
+    row.innerHTML=`<div class="row-icon merged">${m.icon}</div><div class="row-main"><div class="row-name">${app}</div><div class="row-path">${m.path}</div></div>
+      <div class="row-meta">
+        <span class="pill">MERGED</span>
+        <div class="row-actions">
+          <button class="icon-btn" data-open="${app}"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M6 3H3V13H13V10"/><path d="M10 3H13V6"/><path d="M8 8L13 3"/></svg> Open</button>
+          <button class="icon-btn" data-merge="${app}"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M8 2L9.5 6.5L14 8L9.5 9.5L8 14L6.5 9.5L2 8L6.5 6.5Z"/></svg> Merge</button>
+        </div>
+      </div>`;
+    list.appendChild(row);
+  });
+  list.querySelectorAll("[data-open]").forEach(b=>b.addEventListener("click",e=>{
+    const app=e.currentTarget.dataset.open;
+    callBackend("open",app);
+  }));
+  list.querySelectorAll("[data-merge]").forEach(b=>b.addEventListener("click",e=>{
+    const app=e.currentTarget.dataset.merge;
+    callBackend("merge",app);
+  }));
+}
+function renderModels(){
+  const list=document.getElementById("models-list"); list.innerHTML="";
+  const row=document.createElement("div"); row.className="row";
+  row.innerHTML=`<div class="row-icon merged">GG</div><div class="row-main"><div class="row-name">gemma-4-12B-uncensored-heretic-Q4_K_S.gguf</div><div class="row-path">SHARED/MODELS • 7.0GB • Global</div></div><div class="row-meta"><span class="pill">ACTIVE</span><div class="row-actions"><button class="icon-btn" onclick="callBackend('reveal','lmstudio')"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M3 5H13V13H3z"/></svg> Reveal</button></div></div>`;
+  list.appendChild(row);
+}
+function renderDevel(){
+  const list=document.getElementById("dev-list"); list.innerHTML="";
+  ["Claude/","OpenCode/","ZCode/","JetBrains/","LMStudio/","Codex/","Gemini/","Projects/","SHARED/MODELS/","Models/"].forEach(name=>{
+    const row=document.createElement("div"); row.className="row";
+    row.innerHTML=`<div class="row-icon">▣</div><div class="row-main"><div class="row-name">${name}</div><div class="row-path">/mnt/NEXAURA/DEVELOPER/${name}</div></div><div class="row-meta"><div class="row-actions" style="opacity:1;transform:none;position:static"><button class="icon-btn" onclick="callBackend('open_developer')"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M6 3H3V13H13V10"/><path d="M10 3H13V6"/><path d="M8 8L13 3"/></svg> Open</button></div></div>`;
+    list.appendChild(row);
+  });
+}
+async function callBackend(action,app){
+  if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.fuse){
+    return new Promise(res=>{
+      window._fuse_cb=(r)=>res(r);
+      try{ window.webkit.messageHandlers.fuse.postMessage(JSON.stringify({action,app,cb:"_fuse_cb"})); }catch(e){ res(""+e); }
+    });
+  }
+  try{
+    const url=`http://127.0.0.1:8765/api/${action}${app?`?app=${app}`:""}`;
+    const r=await fetch(url); if(r.ok) return await r.text();
+  }catch(e){}
+  return action;
+}
+async function refreshStatus(){
+  try{
+    const r=await fetch("http://127.0.0.1:8765/api/status").then(x=>x.json()).catch(()=>null);
+    if(r) status=r;
+  }catch(e){}
+  document.getElementById("status-text").innerHTML=`<strong style="color:#fff">${status.disk}</strong> &nbsp;•&nbsp; ${status.models} model &nbsp;•&nbsp; ${status.apps_merged} merged`;
+  document.getElementById("count-merged").textContent=status.apps_merged;
+  document.getElementById("count-models").textContent=status.models;
+}
+document.querySelectorAll(".tab, .nav-item[data-view]").forEach(el=>{
+  el.addEventListener("click",()=> setView(el.dataset.view));
+});
+document.getElementById("merge-all").addEventListener("click", async()=>{
+  for(const a of APPS){ await callBackend("merge",a); await new Promise(r=>setTimeout(r,40)); }
+  refreshStatus();
+});
+document.getElementById("open-dev").addEventListener("click",()=> callBackend("open_developer"));
+document.getElementById("sync-models").addEventListener("click",async()=> await callBackend("sync"));
+document.getElementById("search").addEventListener("input",e=>{ setView("apps"); renderApps(e.target.value); });
+document.getElementById("close-btn").addEventListener("click",()=> callBackend("close"));
+document.getElementById("min-btn").addEventListener("click",()=> callBackend("minimize"));
+document.getElementById("drag-region").addEventListener("mousedown",e=>{
+  if(e.button!==0) return;
+  try{ window.webkit.messageHandlers.fuse.postMessage(JSON.stringify({action:"drag",x:e.screenX,y:e.screenY})); }catch{}
+});
+renderApps(); renderModels(); renderDevel(); refreshStatus(); setInterval(refreshStatus,3000);
+</script>
+</body>
+</html>
