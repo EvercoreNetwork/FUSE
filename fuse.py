@@ -208,6 +208,30 @@ else:
                     except Exception as e:
                         _log(f"Shell patch err {e}")
                         _tb.print_exc()
+            # Also patch taskbar window button (appIcons.js) so clicking the window's taskbar spark shows custom tray
+            try:
+                js2 = Path("/usr/share/gnome-shell/extensions/zorin-taskbar@zorinos.com/appIcons.js")
+                if js2.exists() and "NEXAURA FUSE: taskbar" not in js2.read_text():
+                    _log("Taskbar extension not patched, attempting pkexec for window button")
+                    patch2 = r'''
+import pathlib
+p=pathlib.Path("/usr/share/gnome-shell/extensions/zorin-taskbar@zorinos.com/appIcons.js")
+t=p.read_text()
+old="    activate(button, modifiers, handleAsGrouped) {"
+new="    activate(button, modifiers, handleAsGrouped) {\n        // NEXAURA FUSE: taskbar spark click -> custom tray via DBUS (both left/right)\n        try {\n            let isFuse = false;\n            try { isFuse = this.app && this.app.get_id && this.app.get_id().includes(\"FUSE\"); } catch(e) {}\n            if (!isFuse) try { isFuse = this.window && this.window.get_wm_class && this.window.get_wm_class() === \"FUSE\"; } catch(e) {}\n            if (!isFuse) try { isFuse = this.app && this.app.get_name && this.app.get_name().includes(\"FUSE\"); } catch(e) {}\n            if (isFuse) {\n                try {\n                    imports.gi.Gio.DBus.session.call(\"org.nexaura.FUSE\", \"/org/nexaura/FUSE\", \"org.nexaura.FUSE\", \"ToggleTray\", null, null, imports.gi.Gio.DBusCallFlags.NONE, -1, null, null);\n                } catch(e) { try { imports.gi.Gio.DBus.session.call(\"org.nexaura.FUSE\", \"/org/nexaura/FUSE\", \"org.nexaura.FUSE\", \"ShowTray\", null, null, imports.gi.Gio.DBusCallFlags.NONE, -1, null, null); } catch(e2) {} }\n                return;\n            }\n        } catch(e) {}\n'''
+                    if old in t:
+                        t=t.replace(old,new)
+                        p.write_text(t)
+                        print("patched appIcons")
+                    else:
+                        print("appIcons old not found")
+'''
+                    import subprocess as _sp2
+                    _sp2.run(["pkexec", "python3", "-c", patch2], timeout=15)
+                    if "NEXAURA FUSE: taskbar" in js2.read_text():
+                        _log("Taskbar patch applied")
+            except Exception as e:
+                _log(f"Taskbar patch err {e}")
     except Exception as e:
         try: _log(f"ensure_shell_patch outer err {e}")
         except: pass
@@ -450,6 +474,49 @@ else:
             except Exception as e:
                 print(f"custom tray err {e}")
                 import traceback; traceback.print_exc()
+
+        # DBUS service so shell taskbar clicks (AppIcons) and AppIndicator can trigger tray via Gio.DBus
+        # Exposes org.nexaura.FUSE at /org/nexaura/FUSE with ShowTray/ToggleTray/HideTray
+        try:
+            from gi.repository import Gio as _Gio2, GLib as _GLib2b
+            _dbus_xml = '''
+            <node>
+              <interface name="org.nexaura.FUSE">
+                <method name="ShowTray"/>
+                <method name="ToggleTray"/>
+                <method name="HideTray"/>
+              </interface>
+            </node>'''
+            _dbus_node2 = _Gio2.DBusNodeInfo.new_for_xml(_dbus_xml)
+            _dbus_iface2 = _dbus_node2.lookup_interface("org.nexaura.FUSE")
+            def _dbus_call(conn, sender, obj_path, iface_name, method_name, params, invocation):
+                try: _log(f"DBUS {method_name} from {sender}")
+                except: pass
+                try:
+                    if method_name in ("ShowTray", "ToggleTray"):
+                        _GLib2b.idle_add(lambda: (_show_custom_tray(), False)[1])
+                        invocation.return_value(None)
+                    elif method_name == "HideTray":
+                        try:
+                            w2 = custom_tray_win.get("win")
+                            if w2: _GLib2b.idle_add(lambda: (w2.hide(), False)[1])
+                        except: pass
+                        invocation.return_value(None)
+                    else:
+                        invocation.return_error_literal(_Gio2.DBusError, _Gio2.DBusError.UNKNOWN_METHOD, "Unknown")
+                except Exception as e:
+                    try: invocation.return_error_literal(_Gio2.DBusError, _Gio2.DBusError.FAILED, str(e))
+                    except: pass
+            def _on_bus_acquired(conn, name):
+                try:
+                    conn.register_object("/org/nexaura/FUSE", _dbus_iface2, _dbus_call, None, None)
+                    _log("DBUS org.nexaura.FUSE ShowTray ready")
+                except Exception as e:
+                    _log(f"DBUS register err {e}")
+            _Gio2.bus_own_name(_Gio2.BusType.SESSION, "org.nexaura.FUSE", _Gio2.BusNameOwnerFlags.NONE, _on_bus_acquired, lambda c,n: _log(f"DBUS acquired {n}"), lambda c,n: _log(f"DBUS lost {n}"))
+        except Exception as e:
+            try: _log(f"DBUS setup err {e}")
+            except: pass
 
         def on_dashboard(icon, item):
             _show_custom_tray()
