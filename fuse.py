@@ -4,7 +4,11 @@ NEXAURA FUSE - Merge Windows and Linux workspaces
 Tray daemon that keeps NEXAURA DEVELOPER in sync across OSes.
 Cross-platform: Linux (AyatanaAppIndicator3/Gtk), Windows (pystray native), macOS.
 """
-import os, sys, json, pathlib, shutil, subprocess, threading, time, fcntl, atexit
+import os, sys, json, pathlib, shutil, subprocess, threading, time, atexit
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # Windows: no fcntl, use msvcrt or file lock
 from pathlib import Path
 
 # Config
@@ -1670,39 +1674,91 @@ def run_dark():
 
 def ensure_singleton():
     """Singleton: only one FUSE may run. If already running, focus its window and exit."""
-    lock_path = Path("/tmp/nexaura-fuse.lock")
-    pid_path = Path("/tmp/nexaura-fuse.pid")
-    try:
-        fp = open(lock_path, "w")
-        fcntl.flock(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        # keep lock alive
-        fp.write(str(os.getpid()))
-        fp.flush()
-        # write pid file
-        try: pid_path.write_text(str(os.getpid()))
-        except: pass
-        def _cleanup():
-            try:
-                fcntl.flock(fp, fcntl.LOCK_UN)
-                fp.close()
-                lock_path.unlink(missing_ok=True)
-                pid_path.unlink(missing_ok=True)
-            except: pass
-        atexit.register(_cleanup)
-        return fp  # keep reference
-    except (IOError, OSError, BlockingIOError):
-        # another instance holds lock - try to focus its window then exit
+    # Cross-platform lock: /tmp on Unix, TEMP on Windows
+    if sys.platform.startswith("win"):
+        lock_path = Path(os.environ.get("TEMP", str(Path.home() / "AppData/Local/Temp"))) / "nexaura-fuse.lock"
+        pid_path = Path(os.environ.get("TEMP", str(Path.home() / "AppData/Local/Temp"))) / "nexaura-fuse.pid"
+    else:
+        lock_path = Path("/tmp/nexaura-fuse.lock")
+        pid_path = Path("/tmp/nexaura-fuse.pid")
+    # Try fcntl (Unix) else msvcrt (Windows) else file existence
+    if fcntl is not None:
         try:
-            # try to raise existing window
-            for cmd in [["wmctrl","-a","NEXAURA FUSE"], ["xdotool","search","--name","NEXAURA FUSE","windowactivate"], ["gdbus","call","--session","--dest","org.gnome.Shell","--object-path","/org/gnome/Shell","--method","org.gnome.Shell.Eval","Main.activateWindow(null)"]]:
+            fp = open(lock_path, "w")
+            fcntl.flock(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fp.write(str(os.getpid()))
+            fp.flush()
+            try: pid_path.write_text(str(os.getpid()))
+            except: pass
+            def _cleanup():
                 try:
-                    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    break
-                except: continue
-            # also notify via print
-            print("FUSE already running - focused existing window")
-        except: pass
-        sys.exit(0)
+                    fcntl.flock(fp, fcntl.LOCK_UN)
+                    fp.close()
+                    lock_path.unlink(missing_ok=True)
+                    pid_path.unlink(missing_ok=True)
+                except: pass
+            atexit.register(_cleanup)
+            return fp
+        except (IOError, OSError, BlockingIOError):
+            pass  # fall through to focus
+    else:
+        # Windows: try msvcrt locking, fallback to exclusive file
+        try:
+            import msvcrt
+            fp = open(lock_path, "w")
+            try:
+                msvcrt.locking(fp.fileno(), msvcrt.LK_NBLCK, 1)
+                fp.write(str(os.getpid()))
+                fp.flush()
+                try: pid_path.write_text(str(os.getpid()))
+                except: pass
+                def _cleanup():
+                    try:
+                        msvcrt.locking(fp.fileno(), msvcrt.LK_UNLCK, 1)
+                        fp.close()
+                        lock_path.unlink(missing_ok=True)
+                        pid_path.unlink(missing_ok=True)
+                    except: pass
+                atexit.register(_cleanup)
+                return fp
+            except (IOError, OSError):
+                try: fp.close()
+                except: pass
+                # fall through
+        except ImportError:
+            pass
+        # Fallback: exclusive create
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            fp = os.fdopen(fd, "w")
+            fp.write(str(os.getpid()))
+            fp.flush()
+            try: pid_path.write_text(str(os.getpid()))
+            except: pass
+            def _cleanup():
+                try:
+                    fp.close()
+                    lock_path.unlink(missing_ok=True)
+                    pid_path.unlink(missing_ok=True)
+                except: pass
+            atexit.register(_cleanup)
+            return fp
+        except FileExistsError:
+            pass
+        except (IOError, OSError):
+            pass
+    # If we reach here, another instance holds lock - try to focus its window then exit
+    try:
+        # try to raise existing window
+        for cmd in [["wmctrl","-a","NEXAURA FUSE"], ["xdotool","search","--name","NEXAURA FUSE","windowactivate"], ["gdbus","call","--session","--dest","org.gnome.Shell","--object-path","/org/gnome/Shell","--method","org.gnome.Shell.Eval","Main.activateWindow(null)"]]:
+            try:
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                break
+            except: continue
+        # also notify via print
+        print("FUSE already running - focused existing window")
+    except: pass
+    sys.exit(0)
 
 if __name__ == "__main__":
     _lock_fp = ensure_singleton() if "--help" not in sys.argv and "help" not in sys.argv else None
@@ -1721,6 +1777,13 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "--dark":
         run_dark()
     else:
+        # Respect Settings: start_minimized means tray only (no dashboard window)
+        try:
+            _s = load_settings()
+            if _s.get("start_minimized"):
+                run_tray()
+                sys.exit(0)
+        except: pass
         # Auto: Zorin with single bottom bar (stockgs-keep-top-panel false) has no AppIndicator host in bottom
         # Detect and use dark animated frontend so icon appears in taskbar instead of invisible top tray
         try:
