@@ -318,7 +318,7 @@ def run_tray():
                     e = 1 - p
                     try:
                         win.set_opacity(start_op * e)
-                        win.move(int(sx), int(sy - 6 * p))
+                        win.move(int(sx), int(sy + 10 * p))
                     except: pass
                     if p < 1:
                         return True
@@ -779,7 +779,7 @@ def run_dark():
         import cairo as _cairo_dash
         screen = win.get_screen()
         visual = screen.get_rgba_visual()
-        if visual and screen.is_composited():
+        if visual:
             win.set_visual(visual)
         win.set_app_paintable(True)
         # Clear window to transparent - fixes black square on Mutter/X11
@@ -791,26 +791,18 @@ def run_dark():
             return False
         win.connect("draw", _dash_draw)
         css = b"""
-        window, decoration, .background {
+        window, decoration, .background, window.background {
             background-color: transparent;
             background: transparent;
             border: none;
             box-shadow: none;
         }
-        window.background.csd, window.background {
-            background: transparent;
-            border-radius: 12px;
-        }
-        decoration {
+        decoration, window.csd decoration {
             border-radius: 12px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.08);
             background: transparent;
         }
-        /* inner container will be rounded, clip webview */
-        #dash-box {
-            background: #080808;
-            border-radius: 12px;
-        }
+        /* HTML body provides visible #080808 with 12px radius; window remains transparent outside */
         """
         provider = Gtk.CssProvider()
         provider.load_from_data(css)
@@ -854,17 +846,9 @@ def run_dark():
         view = webview  # alias for compat
         webview.set_app_paintable(True)
     except: pass
-    # Wrap in EventBox with rounded bg to ensure clipping (GTK3 no overflow:hidden)
-    try:
-        from gi.repository import Gtk as _GtkDash
-        _dash_box = _GtkDash.EventBox()
-        _dash_box.set_name("dash-box")
-        _dash_box.set_visible_window(True)
-        _dash_box.get_style_context().add_class("dash-box")
-        # will add webview later, but prepare container
-        _dash_container = _dash_box
-    except:
-        _dash_container = None
+    # No extra container - window transparent + WebKit transparent + HTML rounded (12px)
+    # keeps outer corners transparent (no black square). EventBox would reintroduce opaque square.
+    _dash_container = None
 
     def on_fuse_message(mgr, msg):
         try:
@@ -1014,15 +998,8 @@ def run_dark():
     uri = html_path.as_uri() if html_path.exists() else "about:blank"
     webview.load_uri(uri)
 
-    # header bar for drag (WebKit handles) - add via rounded container to fix black square
-    try:
-        if _dash_container is not None:
-            _dash_container.add(webview)
-            win.add(_dash_container)
-        else:
-            win.add(webview)
-    except:
-        win.add(webview)
+    # header bar for drag (WebKit handles) - direct add, window/WebKit transparent lets HTML rounding show
+    win.add(webview)
     def _on_delete(w,e):
         w.hide_on_delete()
         return True
