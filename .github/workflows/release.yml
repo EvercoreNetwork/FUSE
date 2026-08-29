@@ -1,0 +1,74 @@
+name: RELEASE
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.0.0)'
+        required: true
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            artifact: FUSE-linux
+            cmd: pyinstaller FUSE.spec --noconfirm
+            out: dist/FUSE
+          - os: windows-latest
+            artifact: FUSE-windows
+            cmd: pyinstaller FUSE.spec --noconfirm
+            out: dist/FUSE.exe
+          - os: macos-latest
+            artifact: FUSE-macos
+            cmd: pyinstaller FUSE.spec --noconfirm
+            out: dist/FUSE.app
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt pyinstaller
+      - run: ${{ matrix.cmd }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.out }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Create RELEASE (not prerelease)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || inputs.version }}
+          name: FUSE ${{ github.ref_name || inputs.version }}
+          body: |
+            NEXAURA FUSE - Merge Windows and Linux workspaces
+            
+            **SHARED/MODELS** at `NEXAURA:\DEVELOPER\SHARED\MODELS` (NTFS) - raw GGUFs shared across LMStudio, Ollama, JAN.
+            Tray daemon auto-migrates `~/.config` etc. to `DEVELOPER/<App>/` and syncs new models to all providers.
+            
+            ### Install
+            - **Linux:** `FUSE` binary or `python fuse.py`
+            - **Windows:** `FUSE.exe`
+            - **macOS:** `FUSE.app`
+            
+            ### Verify
+            - `FUSE --merge all` or tray -> Merge all
+          draft: false
+          prerelease: false
+          files: artifacts/**/*
+          token: ${{ secrets.GITHUB_TOKEN }}

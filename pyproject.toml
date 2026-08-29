@@ -1,0 +1,13 @@
+[project]
+name = "nexaura-fuse"
+version = "1.0.0"
+description = "Merge Windows and Linux workspaces - NEXAURA DEVELOPER sync daemon"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["pystray", "Pillow", "watchdog", "psutil"]
+[project.scripts]
+fuse = "fuse:main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
