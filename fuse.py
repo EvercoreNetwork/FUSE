@@ -178,12 +178,16 @@ old="""    vfunc_button_press_event(event) {
         // if middle mouse button clicked send SecondaryActivate dbus event and do not show appindicator menu
         if (event.get_button() === Clutter.BUTTON_MIDDLE) {"""
 new="""    vfunc_button_press_event(event) {
-        // NEXAURA FUSE: left/right both open custom tray via secondaryActivate (Python shows WebKit popup)
+        // NEXAURA FUSE: left/right both open custom tray via DBUS (both left/right)
         try {
-            if (this._indicator && this._indicator.id === "nexaura-fuse") {
+            if (this._indicator && this._indicator.id && this._indicator.id.toLowerCase().includes("fuse")) {
                 if (Main.panel.menuManager.activeMenu)
                     Main.panel.menuManager._closeMenu(true, Main.panel.menuManager.activeMenu);
-                this._indicator.secondaryActivate(event.get_time(), ...event.get_coords());
+                try {
+                    Gio.DBus.session.call("org.nexaura.FUSE", "/org/nexaura/FUSE", "org.nexaura.FUSE", "ToggleTray", null, null, Gio.DBusCallFlags.NONE, -1, null, (c,res)=>{});
+                } catch(e) {
+                    try { this._indicator.secondaryActivate(event.get_time(), ...event.get_coords()); } catch(e2) {}
+                }
                 return Clutter.EVENT_STOP;
             }
         } catch(e) {}
@@ -218,7 +222,7 @@ import pathlib
 p=pathlib.Path("/usr/share/gnome-shell/extensions/zorin-taskbar@zorinos.com/appIcons.js")
 t=p.read_text()
 old="    activate(button, modifiers, handleAsGrouped) {"
-new="    activate(button, modifiers, handleAsGrouped) {\n        // NEXAURA FUSE: taskbar spark click -> custom tray via DBUS (both left/right)\n        try {\n            let isFuse = false;\n            try { isFuse = this.app && this.app.get_id && this.app.get_id().includes(\"FUSE\"); } catch(e) {}\n            if (!isFuse) try { isFuse = this.window && this.window.get_wm_class && this.window.get_wm_class() === \"FUSE\"; } catch(e) {}\n            if (!isFuse) try { isFuse = this.app && this.app.get_name && this.app.get_name().includes(\"FUSE\"); } catch(e) {}\n            if (isFuse) {\n                try {\n                    imports.gi.Gio.DBus.session.call(\"org.nexaura.FUSE\", \"/org/nexaura/FUSE\", \"org.nexaura.FUSE\", \"ToggleTray\", null, null, imports.gi.Gio.DBusCallFlags.NONE, -1, null, null);\n                } catch(e) { try { imports.gi.Gio.DBus.session.call(\"org.nexaura.FUSE\", \"/org/nexaura/FUSE\", \"org.nexaura.FUSE\", \"ShowTray\", null, null, imports.gi.Gio.DBusCallFlags.NONE, -1, null, null); } catch(e2) {} }\n                return;\n            }\n        } catch(e) {}\n"""
+new="    activate(button, modifiers, handleAsGrouped) {\n        // NEXAURA FUSE: taskbar spark click -> custom tray via DBUS (both left/right)\n        try {\n            let isFuse = false;\n            try { isFuse = this.app && this.app.get_id && this.app.get_id().includes(\"FUSE\"); } catch(e) {}\n            if (!isFuse) try { isFuse = this.window && this.window.get_wm_class && this.window.get_wm_class() === \"FUSE\"; } catch(e) {}\n            if (!isFuse) try { isFuse = this.app && this.app.get_name && this.app.get_name().includes(\"FUSE\"); } catch(e) {}\n            if (isFuse) {\n                try {\n                    Gio.DBus.session.call(\"org.nexaura.FUSE\", \"/org/nexaura/FUSE\", \"org.nexaura.FUSE\", \"ToggleTray\", null, null, Gio.DBusCallFlags.NONE, -1, null, null);\n                } catch(e) { try { Gio.DBus.session.call(\"org.nexaura.FUSE\", \"/org/nexaura/FUSE\", \"org.nexaura.FUSE\", \"ShowTray\", null, null, Gio.DBusCallFlags.NONE, -1, null, null); } catch(e2) {} }\n                return;\n            }\n        } catch(e) {}\n"""
                     if old in t:
                         t=t.replace(old,new)
                         p.write_text(t)
