@@ -266,6 +266,13 @@ def run_tray():
                 win.present()
                 try:
                     win.set_keep_above(True)
+                    # grab so clicking outside closes (focus-out + button outside)
+                    win.set_can_focus(True)
+                    win.grab_focus()
+                    import gi as _gi_grab
+                    from gi.repository import Gtk as _Gtk_grab
+                    try: _Gtk_grab.grab_add(win)
+                    except: pass
                 except: pass
                 _start = __import__("time").time()
                 def _tick():
@@ -298,6 +305,11 @@ def run_tray():
 
         def _tray_animate_hide(win, duration=150):
             try:
+                # remove grab first so outside clicks stop being captured
+                try:
+                    from gi.repository import Gtk as _Gtk_grab2
+                    _Gtk_grab2.grab_remove(win)
+                except: pass
                 if not win.get_visible() or _tray_anim["active"]:
                     try: win.hide()
                     except: pass
@@ -477,8 +489,25 @@ def run_tray():
                     win.add(box)
                 except:
                     win.add(view)
+                win.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.FOCUS_CHANGE_MASK)
+                win.set_can_focus(True)
                 win.connect("focus-out-event", lambda w,e: (_tray_animate_hide(w), False)[1] or True)
                 win.connect("key-press-event", lambda w,e: (_tray_animate_hide(w), False)[1] if e.keyval==65307 else None)
+                # clicking outside (with grab, all presses go to win) -> if coords outside allocation, hide
+                def _on_btn_press(w, ev):
+                    try:
+                        # ev.x, ev.y relative to win; outside means <0 or > alloc
+                        aw, ah = w.get_allocated_width(), w.get_allocated_height()
+                        if ev.x < 0 or ev.y < 0 or ev.x > aw or ev.y > ah:
+                            _tray_animate_hide(w)
+                            return True
+                    except: pass
+                    return False
+                win.connect("button-press-event", _on_btn_press)
+                # also handle grab broken (e.g., other grab)
+                try:
+                    win.connect("grab-broken-event", lambda w,e: (_tray_animate_hide(w), False)[1])
+                except: pass
                 # Realize with RGBA before show
                 # Animate in near tray icon (no delay)
                 try:
@@ -506,6 +535,130 @@ def run_tray():
             except Exception as e:
                 print(f"custom tray err {e}")
                 import traceback; traceback.print_exc()
+
+        # Pre-create tray window to avoid first-click 1s delay (WebKit init)
+        # Do it idle shortly after startup so first click animates instantly
+        def _preload_tray_win():
+            try:
+                # trigger creation without showing animation: create win, load uri, then hide
+                # Use the same creation path but keep hidden
+                from gi.repository import Gtk, Gdk, WebKit2, GLib
+                import cairo
+                if custom_tray_win["win"] is not None:
+                    return False
+                # Create window (duplicate minimal creation to preload)
+                win = Gtk.Window(type=Gtk.WindowType.POPUP)
+                custom_tray_win["win"] = win
+                win.set_title("FUSE Tray")
+                win.set_decorated(False)
+                win.set_skip_taskbar_hint(True)
+                win.set_skip_pager_hint(True)
+                win.set_keep_above(True)
+                win.set_type_hint(Gdk.WindowTypeHint.POPUP_MENU)
+                win.set_resizable(False)
+                win.set_default_size(320, 180)
+                win.set_app_paintable(True)
+                try:
+                    scr = win.get_screen()
+                    vis = scr.get_rgba_visual()
+                    if vis and scr.is_composited():
+                        win.set_visual(vis)
+                    def _on_draw(w, cr):
+                        cr.set_source_rgba(0, 0, 0, 0)
+                        cr.set_operator(cairo.Operator.SOURCE)
+                        cr.paint()
+                        cr.set_operator(cairo.Operator.OVER)
+                        return False
+                    win.connect("draw", _on_draw)
+                    css = b"window, decoration, .background { background-color: transparent; background: transparent; border: none; box-shadow: none; } GtkWindow { background: transparent; }"
+                    prov = Gtk.CssProvider()
+                    prov.load_from_data(css)
+                    Gtk.StyleContext.add_provider_for_screen(scr, prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                except: pass
+                # offscreen position for preload
+                try:
+                    win.move(-1000, -1000)
+                    win.set_opacity(0)
+                except: pass
+                mgr = WebKit2.UserContentManager()
+                mgr.register_script_message_handler("fuse")
+                def _on_msg(m, msg):
+                    try:
+                        try: js = msg.get_js_value()
+                        except: js = msg.get_jsc_value()
+                        raw = js.to_string()
+                        import json as _j
+                        d = _j.loads(raw)
+                        act = d.get("action") if isinstance(d,dict) else str(d)
+                    except: act = ""
+                    if act == "dashboard":
+                        _show_dashboard()
+                        GLib.idle_add(lambda: _tray_animate_hide(win))
+                    elif act == "merge":
+                        for a in APPS: print(merge_app(a))
+                    elif act == "quit":
+                        try: win.hide()
+                        except: pass
+                        try: icon.stop()
+                        except: pass
+                        import os as _os; _os._exit(0)
+                mgr.connect("script-message-received::fuse", _on_msg)
+                settings = WebKit2.Settings()
+                try:
+                    settings.set_enable_javascript(True)
+                    settings.set_allow_file_access_from_file_urls(True)
+                    settings.set_allow_universal_access_from_file_urls(True)
+                except: pass
+                view = WebKit2.WebView.new_with_user_content_manager(mgr)
+                view.set_settings(settings)
+                try:
+                    rgba = Gdk.RGBA()
+                    rgba.parse("rgba(0,0,0,0)")
+                    view.set_background_color(rgba)
+                    view.set_app_paintable(True)
+                except: pass
+                html_path = DEVELOPER / "FUSE/frontend/tray.html"
+                if not html_path.exists():
+                    html_path = Path(__file__).parent / "frontend/tray.html"
+                view.load_uri(html_path.as_uri())
+                try:
+                    box = Gtk.EventBox()
+                    box.set_visible_window(False)
+                    box.set_app_paintable(True)
+                    box.connect("draw", lambda w, cr: False)
+                    box.add(view)
+                    win.add(box)
+                except:
+                    win.add(view)
+                win.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.FOCUS_CHANGE_MASK)
+                win.set_can_focus(True)
+                win.connect("focus-out-event", lambda w,e: (_tray_animate_hide(w), False)[1] or True)
+                win.connect("key-press-event", lambda w,e: (_tray_animate_hide(w), False)[1] if e.keyval==65307 else None)
+                def _on_btn_press(w, ev):
+                    try:
+                        aw, ah = w.get_allocated_width(), w.get_allocated_height()
+                        if ev.x < 0 or ev.y < 0 or ev.x > aw or ev.y > ah:
+                            _tray_animate_hide(w)
+                            return True
+                    except: pass
+                    return False
+                win.connect("button-press-event", _on_btn_press)
+                try: win.connect("grab-broken-event", lambda w,e: (_tray_animate_hide(w), False)[1])
+                except: pass
+                # show briefly offscreen to realize, then hide
+                win.show_all()
+                win.hide()
+                win.set_opacity(1)
+                _log("tray preload done (first click will animate)")
+            except Exception as e:
+                try: _log(f"preload err {e}")
+                except: pass
+                import traceback; traceback.print_exc()
+            return False
+        try:
+            from gi.repository import GLib as _GLib_pre
+            _GLib_pre.timeout_add(350, _preload_tray_win)
+        except: pass
 
         # DBUS service so shell taskbar clicks (AppIcons) and AppIndicator can trigger tray via Gio.DBus
         # Exposes org.nexaura.FUSE at /org/nexaura/FUSE with ShowTray/ToggleTray/HideTray
