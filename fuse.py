@@ -58,13 +58,19 @@ def save_settings(data):
         return False
 
 def get_executable_path():
-    """Return executable for autostart: frozen bundle or dist/FUSE or python fallback"""
+    """Return executable for autostart: frozen bundle or shared storage FUSE or python fallback"""
     try:
         if getattr(sys, 'frozen', False):
             return Path(sys.executable).resolve()
     except: pass
-    # Check dist/FUSE next to this file or DEVELOPER/FUSE/dist/FUSE
+    # Prefer shared storage copy (visible from both Linux and Windows) then dist
     candidates = [
+        Path("/mnt/NEXAURA/DEVELOPER/FUSE/FUSE"),  # shared root Linux
+        Path("/mnt/NEXAURA/DEVELOPER/FUSE/FUSE.exe"),  # shared root Windows (also visible on Linux)
+        Path("/mnt/NEXAURA/FUSE"),  # drive root
+        Path("/mnt/NEXAURA/FUSE.exe"),
+        Path(__file__).parent / "FUSE",  # next to script (shared)
+        Path(__file__).parent / "FUSE.exe",
         Path(__file__).parent / "dist" / "FUSE",
         Path(__file__).parent / "dist" / "FUSE.exe",
         Path("/mnt/NEXAURA/DEVELOPER/FUSE/dist/FUSE"),
