@@ -156,89 +156,11 @@ def run_tray():
             sys.stderr.write(line); sys.stderr.flush()
         except: pass
     _log(f"FUSE starting pid={os.getpid()} DEVELOPER={DEVELOPER} exists={DEVELOPER.exists()}")
-    # Auto-patch GNOME Shell extension so left/right both open custom tray (Linux/Zorin)
-    try:
-        if sys.platform.startswith("linux"):
-            js_path = Path("/usr/share/gnome-shell/extensions/zorin-appindicator@zorinos.com/indicatorStatusIcon.js")
-            if js_path.exists():
-                txt = js_path.read_text()
-                if "NEXAURA FUSE: left/right both open custom" not in txt:
-                    _log("Shell extension not patched, attempting pkexec patch for left/right clicks")
-                    try:
-                        import subprocess as _sp
-                        # Use pkexec to patch; script is embedded to avoid external file
-                        patch_py = r'''
-import pathlib
-p=pathlib.Path("/usr/share/gnome-shell/extensions/zorin-appindicator@zorinos.com/indicatorStatusIcon.js")
-t=p.read_text()
-old="""    vfunc_button_press_event(event) {
-        if (this._waitDoubleClickPromise)
-            this._waitDoubleClickPromise.cancel();
-
-        // if middle mouse button clicked send SecondaryActivate dbus event and do not show appindicator menu
-        if (event.get_button() === Clutter.BUTTON_MIDDLE) {"""
-new="""    vfunc_button_press_event(event) {
-        // NEXAURA FUSE: left/right both open custom tray via DBUS (both left/right)
-        try {
-            if (this._indicator && this._indicator.id && this._indicator.id.toLowerCase().includes("fuse")) {
-                if (Main.panel.menuManager.activeMenu)
-                    Main.panel.menuManager._closeMenu(true, Main.panel.menuManager.activeMenu);
-                try {
-                    Gio.DBus.session.call("org.nexaura.FUSE", "/org/nexaura/FUSE", "org.nexaura.FUSE", "ToggleTray", null, null, Gio.DBusCallFlags.NONE, -1, null, (c,res)=>{});
-                } catch(e) {
-                    try { this._indicator.secondaryActivate(event.get_time(), ...event.get_coords()); } catch(e2) {}
-                }
-                return Clutter.EVENT_STOP;
-            }
-        } catch(e) {}
-        if (this._waitDoubleClickPromise)
-            this._waitDoubleClickPromise.cancel();
-
-        // if middle mouse button clicked send SecondaryActivate dbus event and do not show appindicator menu
-        if (event.get_button() === Clutter.BUTTON_MIDDLE) {"""
-if old in t:
-    t=t.replace(old,new)
-    p.write_text(t)
-    print("patched")
-else:
-    print("old not found")
-'''
-                        _sp.run(["pkexec", "python3", "-c", patch_py], timeout=15)
-                        # Verify
-                        if "NEXAURA FUSE" in js_path.read_text():
-                            _log("Shell patch applied, will take effect after logout/restart")
-                        else:
-                            _log("Shell patch pkexec failed or already patched")
-                    except Exception as e:
-                        _log(f"Shell patch err {e}")
-                        _tb.print_exc()
-            # Also patch taskbar window button (appIcons.js) so clicking the window's taskbar spark shows custom tray
-            try:
-                js2 = Path("/usr/share/gnome-shell/extensions/zorin-taskbar@zorinos.com/appIcons.js")
-                if js2.exists() and "NEXAURA FUSE: taskbar" not in js2.read_text():
-                    _log("Taskbar extension not patched, attempting pkexec for window button")
-                    patch2 = r'''
-import pathlib
-p=pathlib.Path("/usr/share/gnome-shell/extensions/zorin-taskbar@zorinos.com/appIcons.js")
-t=p.read_text()
-old="    activate(button, modifiers, handleAsGrouped) {"
-new="    activate(button, modifiers, handleAsGrouped) {\n        // NEXAURA FUSE: taskbar spark click -> custom tray via DBUS (both left/right)\n        try {\n            let isFuse = false;\n            try { isFuse = this.app && this.app.get_id && this.app.get_id().includes(\"FUSE\"); } catch(e) {}\n            if (!isFuse) try { isFuse = this.window && this.window.get_wm_class && this.window.get_wm_class() === \"FUSE\"; } catch(e) {}\n            if (!isFuse) try { isFuse = this.app && this.app.get_name && this.app.get_name().includes(\"FUSE\"); } catch(e) {}\n            if (isFuse) {\n                try {\n                    Gio.DBus.session.call(\"org.nexaura.FUSE\", \"/org/nexaura/FUSE\", \"org.nexaura.FUSE\", \"ToggleTray\", null, null, Gio.DBusCallFlags.NONE, -1, null, null);\n                } catch(e) { try { Gio.DBus.session.call(\"org.nexaura.FUSE\", \"/org/nexaura/FUSE\", \"org.nexaura.FUSE\", \"ShowTray\", null, null, Gio.DBusCallFlags.NONE, -1, null, null); } catch(e2) {} }\n                return;\n            }\n        } catch(e) {}\n"""
-                    if old in t:
-                        t=t.replace(old,new)
-                        p.write_text(t)
-                        print("patched appIcons")
-                    else:
-                        print("appIcons old not found")
-'''
-                    import subprocess as _sp2
-                    _sp2.run(["pkexec", "python3", "-c", patch2], timeout=15)
-                    if "NEXAURA FUSE: taskbar" in js2.read_text():
-                        _log("Taskbar patch applied")
-            except Exception as e:
-                _log(f"Taskbar patch err {e}")
-    except Exception as e:
-        try: _log(f"ensure_shell_patch outer err {e}")
-        except: pass
+    # Proper Linux tray: no GNOME Shell JS patching (anti-pattern)
+    # SNI spec: Activate=left, ContextMenu=right, SecondaryActivate=middle
+    # GNOME AppIndicator host shows menu on both left+right by design (ubuntu/appindicator#313)
+    # pystray: appindicator HAS_DEFAULT_ACTION=False, gtk has activate/popup-menu (pystray#47)
+    # Correct: X11+legacy tray -> Gtk.StatusIcon for custom popup left/right; else AppIndicator native menu
     try:
         import pystray
         from PIL import Image
@@ -329,6 +251,93 @@ new="    activate(button, modifiers, handleAsGrouped) {\n        // NEXAURA FUSE
                 except:
                     return 960, 540
 
+        # Animation state for tray popup (fade+slide) - no delay, 180ms
+        _tray_anim = {"active": False}
+        def _tray_animate_show(win, tx, ty, duration=190):
+            try:
+                if _tray_anim["active"]:
+                    return
+                _tray_anim["active"] = True
+                win.set_opacity(0)
+                try:
+                    win.move(int(tx), int(ty + 10))
+                except: pass
+                win.show_all()
+                win.present()
+                try:
+                    win.set_keep_above(True)
+                except: pass
+                _start = __import__("time").time()
+                def _tick():
+                    elapsed = (__import__("time").time() - _start) * 1000
+                    p = min(1.0, elapsed / duration)
+                    e = 1 - pow(1 - p, 3)  # easeOutCubic
+                    try:
+                        win.set_opacity(e)
+                        win.move(int(tx), int(ty + 10 * (1 - e)))
+                    except: pass
+                    if p < 1:
+                        return True
+                    try:
+                        win.set_opacity(1)
+                        win.move(int(tx), int(ty))
+                    except: pass
+                    _tray_anim["active"] = False
+                    return False
+                from gi.repository import GLib as _GLib_anim
+                _GLib_anim.timeout_add(10, _tick)
+            except Exception as e:
+                try: _log(f"tray animate show err {e}")
+                except: pass
+                try:
+                    win.set_opacity(1)
+                    win.show_all()
+                    win.present()
+                except: pass
+                _tray_anim["active"] = False
+
+        def _tray_animate_hide(win, duration=150):
+            try:
+                if not win.get_visible() or _tray_anim["active"]:
+                    try: win.hide()
+                    except: pass
+                    _tray_anim["active"] = False
+                    return
+                _tray_anim["active"] = True
+                try:
+                    sx, sy = win.get_position()
+                except:
+                    sx, sy = 0, 0
+                start = __import__("time").time()
+                start_op = 1.0
+                try: start_op = win.get_opacity()
+                except: pass
+                def _tick():
+                    elapsed = (__import__("time").time() - start) * 1000
+                    p = min(1.0, elapsed / duration)
+                    e = 1 - p
+                    try:
+                        win.set_opacity(start_op * e)
+                        win.move(int(sx), int(sy - 6 * p))
+                    except: pass
+                    if p < 1:
+                        return True
+                    try:
+                        win.hide()
+                        win.set_opacity(1)
+                        win.move(int(sx), int(sy))
+                    except: pass
+                    _tray_anim["active"] = False
+                    return False
+                from gi.repository import GLib as _GLib_h
+                _GLib_h.timeout_add(10, _tick)
+            except Exception as e:
+                try: _log(f"tray animate hide err {e}")
+                except: pass
+                try: win.hide()
+                except: pass
+                _tray_anim["active"] = False
+
         def _show_custom_tray(*_):
             try:
                 _log(f"_show_custom_tray called args={_}")
@@ -340,7 +349,7 @@ new="    activate(button, modifiers, handleAsGrouped) {\n        // NEXAURA FUSE
                 if win and win.get_visible():
                     try: _log("tray hide (was visible)")
                     except: pass
-                    win.hide()
+                    _tray_animate_hide(win)
                     return
                 if win:
                     # reposition near tray icon (pointer) - bottom taskbar is at sh-48
@@ -350,16 +359,17 @@ new="    activate(button, modifiers, handleAsGrouped) {\n        // NEXAURA FUSE
                         sw, sh = scr.get_width(), scr.get_height()
                         tx = max(8, min(x - 160, sw - 320 - 8))
                         ty = sh - 176 - 48 - 8
-                        win.move(int(tx), int(ty))
-                    except: pass
-                    win.show_all()
-                    win.present()
+                        _tray_animate_show(win, tx, ty)
+                    except:
+                        try:
+                            _tray_animate_show(win, 100, 100)
+                        except: pass
                     return
-                # --- Transparent popup: TOPLEVEL + RGBA visual (fixes white rectangle) ---
-                # POPUP windows on GNOME Mutter/X11 can leave a white backing pixmap
+                # --- Transparent popup: POPUP + RGBA visual (canonical, fixes white rectangle) ---
+                # POPUP windows on GNOME Mutter/X11 need RGBA visual + SOURCE clear
                 # if the visual is not RGBA or if the draw handler uses wrong operator.
-                # Use TOPLEVEL + POPUP_MENU hint + app_paintable + SOURCE clear.
-                win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+                # Use POPUP + POPUP_MENU hint + app_paintable + SOURCE clear (canonical).
+                win = Gtk.Window(type=Gtk.WindowType.POPUP)
                 custom_tray_win["win"] = win
                 win.set_title("FUSE Tray")
                 win.set_decorated(False)
@@ -467,14 +477,32 @@ new="    activate(button, modifiers, handleAsGrouped) {\n        // NEXAURA FUSE
                     win.add(box)
                 except:
                     win.add(view)
-                win.connect("focus-out-event", lambda w,e: w.hide())
-                win.connect("key-press-event", lambda w,e: w.hide() if e.keyval==65307 else None)
+                win.connect("focus-out-event", lambda w,e: (_tray_animate_hide(w), False)[1] or True)
+                win.connect("key-press-event", lambda w,e: (_tray_animate_hide(w), False)[1] if e.keyval==65307 else None)
                 # Realize with RGBA before show
-                win.show_all()
-                # Force transparent after show (some WMs reset visual after show)
+                # Animate in near tray icon (no delay)
                 try:
-                    win.set_opacity(1.0)
-                except: pass
+                    scr2 = Gdk.Screen.get_default()
+                    sw2, sh2 = scr2.get_width(), scr2.get_height()
+                    try:
+                        x2, y2 = _get_pointer_pos()
+                        tx2 = max(8, min(x2 - 160, sw2 - 320 - 8))
+                        ty2 = sh2 - 180 - 48 - 8
+                    except:
+                        tx2, ty2 = sw2 - 320 - 12, sh2 - 180 - 58
+                    # prepare for animate: opacity 0 offset
+                    try:
+                        win.set_opacity(0)
+                        win.move(int(tx2), int(ty2 + 10))
+                    except: pass
+                    win.show_all()
+                    win.present()
+                    _tray_animate_show(win, tx2, ty2)
+                except:
+                    try:
+                        win.show_all()
+                        win.set_opacity(1.0)
+                    except: pass
             except Exception as e:
                 print(f"custom tray err {e}")
                 import traceback; traceback.print_exc()
@@ -531,68 +559,92 @@ new="    activate(button, modifiers, handleAsGrouped) {\n        // NEXAURA FUSE
             os._exit(0)
 
         s = get_status()
-        # --- Linux: force Gtk.StatusIcon so left AND right clicks both open custom tray directly ---
-        # AppIndicator/StatusNotifier (Ayatana) intentionally hides left-click behind a DBus menu;
-        # the spec provides only scroll-event + secondary-activate (middle) + menu. It cannot reliably
-        # distinguish left/right to show a custom window. Gtk.StatusIcon (XEmbed/Shell TrayManager)
-        # on X11 *does* expose 'activate' (left) and 'popup-menu' (right) separately, which is what
-        # the user expects. We patch the pystray Gtk backend *before* creating the Icon so both
-        # signals route to _show_custom_tray, and we use an empty menu so no native popup appears.
-        # Linux tray: keep native AppIndicator (visible in Zorin taskbar bottom) but make left/right both open custom
-        # instead of requiring second click. AppIndicator spec only exposes secondary-activate (middle) natively;
-        # we patch the GNOME Shell extension JS (indicatorStatusIcon.js) to route left/right through secondaryActivate,
-        # and set a Gtk.MenuItem as secondary-activate target that triggers _show_custom_tray.
-        # For X11 Gtk fallback (if user forces PYSTRAY_BACKEND=gtk) we also patch activate/popup.
-        try:
-            if sys.platform.startswith("linux"):
-                # If user explicitly forces Gtk, still handle it; otherwise keep AppIndicator as primary
-                try:
-                    import pystray._gtk as _gtk_mod
-                    def _fuse_gtk_activate(self, status_icon):
-                        try: _log("CLICK activate (left) -> show custom tray")
-                        except: pass
-                        try:
-                            from gi.repository import GLib
-                            GLib.idle_add(lambda: (_show_custom_tray(), False)[1])
-                        except: _show_custom_tray()
-                    def _fuse_gtk_popup(self, status_icon, button, activate_time):
-                        try: _log(f"CLICK popup-menu (right) button={button} -> show custom tray")
-                        except: pass
-                        try:
-                            from gi.repository import GLib
-                            GLib.idle_add(lambda: (_show_custom_tray(), False)[1])
-                        except: _show_custom_tray()
-                    _gtk_mod.Icon._on_status_icon_activate = _fuse_gtk_activate
-                    _gtk_mod.Icon._on_status_icon_popup_menu = _fuse_gtk_popup
-                    # Do NOT force switch to Gtk by default — AppIndicator is visible in bottom taskbar
-                    # Only switch if AppIndicator is unavailable and user wants Gtk explicitly via env
-                    if os.environ.get("PYSTRAY_BACKEND") == "gtk" and getattr(pystray.Icon, "__module__", "") == "pystray._appindicator":
-                        pystray.Icon = _gtk_mod.Icon
-                        _log("Forced Gtk.StatusIcon per PYSTRAY_BACKEND=gtk")
-                except Exception as e:
-                    _log(f"Gtk patch warn: {e}")
-        except: pass
-
-        # Cross-platform menu: Linux uses empty native menu because custom WebKit popup IS the menu.
-        # Windows/macOS have no Gtk/WebKit tray window, so they keep a native pystray menu.
+        # --- Proper Linux tray per SNI/pystray docs ---
+        # - pystray AppIndicator: HAS_DEFAULT_ACTION=False, menu shown on both left+right by GNOME host (ubuntu/appindicator#313)
+        # - pystray Gtk: activate=left, popup-menu=right (pystray/_gtk.py:30, pystray#47)
+        # - OSS pattern (Nextcloud/Discord/Electron): X11+legacy tray -> Gtk StatusIcon for custom popup; else AppIndicator native menu
+        # Inspiration: Ayatana simple-client.c app_indicator_set_menu + secondary target=middle only; SNI Activate/ContextMenu
+        use_gtk_for_custom = False
         is_linux = sys.platform.startswith("linux")
-        if is_linux:
-            # Linux AppIndicator: keep a minimal native menu as fallback, but JS patch
-            # (indicatorStatusIcon.js) routes left/right directly to secondaryActivate -> _show_custom_tray,
-            # so native menu is never shown on single click. Menu item also serves as secondary target.
+        if is_linux and not os.environ.get("PYSTRAY_BACKEND"):
             try:
-                # One visible item ensures isReady (menuPath non-null) and provides secondary target
+                # Prefer Gtk on X11 where legacy tray manager can show XEmbed icon (Zorin bottom bar)
+                # Check X11 and composited screen + legacy-tray-enabled (proper per GNOME fallback docs)
+                if os.environ.get("XDG_SESSION_TYPE", "x11") == "x11":
+                    import gi as _gi2
+                    _gi2.require_version('Gtk', '3.0')
+                    from gi.repository import Gdk as _Gdk2
+                    _screen = None
+                    try:
+                        _screen = _Gdk2.Screen.get_default()
+                    except:
+                        _screen = None
+                    _composited = False
+                    try:
+                        _composited = _screen.is_composited() if _screen else False
+                    except:
+                        _composited = True  # assume composited on X11
+                    _legacy_ok = True
+                    try:
+                        import subprocess as _sp2
+                        _out = _sp2.check_output(["gsettings", "get", "org.gnome.shell.extensions.zorin-appindicator", "legacy-tray-enabled"], text=True, timeout=2).strip()
+                        _legacy_ok = "true" in _out.lower()
+                    except:
+                        _legacy_ok = True
+                    if _composited and _legacy_ok:
+                        use_gtk_for_custom = True
+            except Exception as _e:
+                _log(f"Gtk custom check err {_e}")
+                use_gtk_for_custom = False
+        if use_gtk_for_custom:
+            try:
+                import pystray._gtk as _gtk_mod
+                from gi.repository import GLib as _GLib_gtk
+                def _fuse_gtk_activate(self, status_icon):
+                    try: _log("Gtk activate (left) -> custom tray")
+                    except: pass
+                    try: _GLib_gtk.idle_add(lambda: (_show_custom_tray(), False)[1])
+                    except: _show_custom_tray()
+                def _fuse_gtk_popup(self, status_icon, button, activate_time):
+                    try: _log(f"Gtk popup-menu (right) button={button} -> custom tray")
+                    except: pass
+                    try: _GLib_gtk.idle_add(lambda: (_show_custom_tray(), False)[1])
+                    except: _show_custom_tray()
+                _gtk_mod.Icon._on_status_icon_activate = _fuse_gtk_activate
+                _gtk_mod.Icon._on_status_icon_popup_menu = _fuse_gtk_popup
+                pystray.Icon = _gtk_mod.Icon
+                _log("Linux X11 legacy tray: using Gtk.StatusIcon for left/right custom popup (per pystray#47)")
+            except Exception as e:
+                _log(f"Gtk patch warn: {e}")
+                use_gtk_for_custom = False
+
+        # Cross-platform menu: keep custom WebKit popup as Linux Gtk custom; AppIndicator/Win/mac use native menu
+        is_linux = sys.platform.startswith("linux")
+        if is_linux and use_gtk_for_custom:
+            # Gtk custom popup handles both clicks; native menu hidden (empty) so no double menu
+            try:
+                menu = pystray.Menu()  # empty -> Gtk popup-menu handler shows custom instead
+            except:
+                menu = None
+        elif is_linux:
+            # AppIndicator on GNOME/Wayland: native menu per HIG (both clicks show menu). Provide real actions.
+            # Custom WebKit available via "Dashboard" item (second click) – proper per SNI spec.
+            try:
                 menu = pystray.Menu(
-                    pystray.MenuItem("NEXAURA FUSE", lambda i, it: _show_custom_tray(), default=True)
+                    pystray.MenuItem("Dashboard", lambda i, it: _show_dashboard()),
+                    pystray.MenuItem("Open DEVELOPER", on_open_developer),
+                    pystray.Menu.SEPARATOR,
+                    pystray.MenuItem("Merge all", on_merge_all),
+                    pystray.MenuItem("Sync models", on_sync_models),
+                    pystray.MenuItem("Quit", on_quit),
                 )
             except:
                 try:
-                    menu = pystray.Menu()
+                    menu = pystray.Menu(pystray.MenuItem("Quit", on_quit))
                 except:
                     menu = None
         else:
-            # Windows / macOS: native pystray menu (no Gtk custom window). Left/right both open it natively.
-            # Directly expose useful actions; custom tray is Linux-only (Gtk).
+            # Windows / macOS: native pystray menu
             try:
                 menu = pystray.Menu(
                     pystray.MenuItem("Open DEVELOPER", on_open_developer),
@@ -608,72 +660,7 @@ new="    activate(button, modifiers, handleAsGrouped) {\n        // NEXAURA FUSE
 
         icon = pystray.Icon("nexaura-fuse", image, "NEXAURA FUSE", menu)
 
-        # Defensive post-creation hooks (if Icon was already instantiated before patch)
-        try:
-            if hasattr(icon, "_status_icon") and icon._status_icon is not None:
-                # Re-wire signals to custom handler in case class patch didn't take effect due to
-                # already-connected signals in __init__.
-                try:
-                    from gi.repository import Gtk, GObject
-                    # disconnect old handlers by trying to disconnect by func name
-                    # (best-effort; if fails, just connect additional handler which will also fire)
-                    try:
-                        icon._status_icon.disconnect_by_func(icon._on_status_icon_activate)
-                    except: pass
-                    try:
-                        icon._status_icon.disconnect_by_func(icon._on_status_icon_popup_menu)
-                    except: pass
-                except: pass
-                try:
-                    icon._status_icon.connect("activate", lambda *_: _show_custom_tray())
-                    icon._status_icon.connect("popup-menu", lambda *_: _show_custom_tray())
-                    icon._status_icon.connect("button-press-event", lambda *_: _show_custom_tray())
-                    icon._status_icon.connect("button-release-event", lambda *_: False)
-                except: pass
-            # AppIndicator: wire left/right (via secondaryActivate) to custom tray
-            if hasattr(icon, "_appindicator"):
-                try:
-                    from gi.repository import Gtk, GLib
-                    def _setup_secondary(*_a):
-                        try:
-                            h = getattr(icon, "_menu_handle", None)
-                            if h is None:
-                                return False
-                            children = h.get_children()
-                            target = children[0] if children else None
-                            if target is None:
-                                # create hidden target
-                                target = Gtk.MenuItem.new_with_label("FUSE")
-                                target.show()
-                                h.append(target)
-                                h.show_all()
-                                try:
-                                    icon._appindicator.set_menu(h)
-                                except: pass
-                            # Ensure activate shows custom (idempotent)
-                            try:
-                                # Avoid duplicate connections by disconnecting previous
-                                pass
-                            except: pass
-                            try:
-                                target.connect("activate", lambda *_: ( _log("secondary activate -> custom tray") , GLib.idle_add(lambda: (_show_custom_tray(), False)[1]) ))
-                            except: pass
-                            try:
-                                icon._appindicator.set_secondary_activate_target(target)
-                                _log(f"secondary-activate target set to {target}")
-                            except Exception as e:
-                                _log(f"set_secondary_activate_target err {e}")
-                        except Exception as e:
-                            _log(f"secondary setup err {e}")
-                        return False
-                    # Delay to ensure _menu_handle is created and indicator isReady
-                    GLib.timeout_add(400, _setup_secondary)
-                    GLib.timeout_add(1200, _setup_secondary)
-                    GLib.timeout_add(2500, _setup_secondary)
-                except Exception as e:
-                    try: _log(f"secondary hook outer err {e}")
-                    except: pass
-        except: pass
+        # No secondary-activate hack: proper backend already handles clicks per spec
         # Watchdog in thread
         def watch():
             try:
@@ -784,21 +771,54 @@ def run_dark():
     win.set_resizable(True)
     # store globally for tray DASHBOARD to focus
     globals()["_DARK_WIN"] = win
-    # rounded corners - opencode style 12px
+    # --- Frameless rounded + transparent (fix black square around window) ---
+    # Must set RGBA visual BEFORE realize, app_paintable, and clear with SOURCE
+    # Window itself is transparent; WebKit is also transparent so HTML border-radius shows desktop, not black
     try:
         from gi.repository import Gdk
+        import cairo as _cairo_dash
         screen = win.get_screen()
         visual = screen.get_rgba_visual()
         if visual and screen.is_composited():
             win.set_visual(visual)
-            win.set_app_paintable(True)
+        win.set_app_paintable(True)
+        # Clear window to transparent - fixes black square on Mutter/X11
+        def _dash_draw(w, cr):
+            cr.set_source_rgba(0, 0, 0, 0)
+            cr.set_operator(_cairo_dash.Operator.SOURCE)
+            cr.paint()
+            cr.set_operator(_cairo_dash.Operator.OVER)
+            return False
+        win.connect("draw", _dash_draw)
         css = b"""
-        window { background: transparent; }
-        decoration { border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.08); }
+        window, decoration, .background {
+            background-color: transparent;
+            background: transparent;
+            border: none;
+            box-shadow: none;
+        }
+        window.background.csd, window.background {
+            background: transparent;
+            border-radius: 12px;
+        }
+        decoration {
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.08);
+            background: transparent;
+        }
+        /* inner container will be rounded, clip webview */
+        #dash-box {
+            background: #080808;
+            border-radius: 12px;
+        }
         """
         provider = Gtk.CssProvider()
         provider.load_from_data(css)
         Gtk.StyleContext.add_provider_for_screen(screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        # also add class for CSD rounding
+        try:
+            win.get_style_context().add_class("csd")
+        except: pass
     except: pass
     # icon
     icon_path = DEVELOPER / "FUSE/assets/logo-256.png"
@@ -826,10 +846,25 @@ def run_dark():
     webview.set_settings(settings)
     try:
         from gi.repository import Gdk
+        # Transparent so window's rounded transparent corners show desktop, not black square
+        # HTML body (#080808) provides the visible dark background with border-radius:12px
         rgba = Gdk.RGBA()
-        rgba.parse("#080808")
+        rgba.parse("rgba(0,0,0,0)")
         webview.set_background_color(rgba)
+        view = webview  # alias for compat
+        webview.set_app_paintable(True)
     except: pass
+    # Wrap in EventBox with rounded bg to ensure clipping (GTK3 no overflow:hidden)
+    try:
+        from gi.repository import Gtk as _GtkDash
+        _dash_box = _GtkDash.EventBox()
+        _dash_box.set_name("dash-box")
+        _dash_box.set_visible_window(True)
+        _dash_box.get_style_context().add_class("dash-box")
+        # will add webview later, but prepare container
+        _dash_container = _dash_box
+    except:
+        _dash_container = None
 
     def on_fuse_message(mgr, msg):
         try:
@@ -979,8 +1014,15 @@ def run_dark():
     uri = html_path.as_uri() if html_path.exists() else "about:blank"
     webview.load_uri(uri)
 
-    # header bar for drag (WebKit handles)
-    win.add(webview)
+    # header bar for drag (WebKit handles) - add via rounded container to fix black square
+    try:
+        if _dash_container is not None:
+            _dash_container.add(webview)
+            win.add(_dash_container)
+        else:
+            win.add(webview)
+    except:
+        win.add(webview)
     def _on_delete(w,e):
         w.hide_on_delete()
         return True
