@@ -20,10 +20,188 @@ if not NEXAURA_MNT.exists():
     else:
         NEXAURA_MNT = HOME / "NEXAURA"
 
-DEVELOPER = NEXAURA_MNT / "DEVELOPER"
+# --- Settings (persistent) ---
+SETTINGS_DIR = HOME / ".config" / "nexaura-fuse"
+SETTINGS_PATH = SETTINGS_DIR / "settings.json"
+DEFAULT_SETTINGS = {
+    "developer_path": str(NEXAURA_MNT / "DEVELOPER"),
+    "run_on_startup": True,
+    "start_minimized": False,
+    "tray_custom_popup": True,  # Linux X11 custom tray vs native menu
+}
+
+def load_settings():
+    try:
+        if SETTINGS_PATH.exists():
+            import json as _js
+            data = _js.loads(SETTINGS_PATH.read_text())
+            # merge defaults
+            for k,v in DEFAULT_SETTINGS.items():
+                if k not in data:
+                    data[k] = v
+            return data
+    except: pass
+    return dict(DEFAULT_SETTINGS)
+
+def save_settings(data):
+    try:
+        SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+        import json as _js, tempfile, os as _os
+        tmp = SETTINGS_PATH.with_suffix(".tmp")
+        tmp.write_text(_js.dumps(data, indent=2))
+        tmp.replace(SETTINGS_PATH)
+        return True
+    except Exception as e:
+        try: print(f"save_settings err {e}")
+        except: pass
+        return False
+
+def get_executable_path():
+    """Return executable for autostart: frozen bundle or dist/FUSE or python fallback"""
+    try:
+        if getattr(sys, 'frozen', False):
+            return Path(sys.executable).resolve()
+    except: pass
+    # Check dist/FUSE next to this file or DEVELOPER/FUSE/dist/FUSE
+    candidates = [
+        Path(__file__).parent / "dist" / "FUSE",
+        Path(__file__).parent / "dist" / "FUSE.exe",
+        Path("/mnt/NEXAURA/DEVELOPER/FUSE/dist/FUSE"),
+        Path("/mnt/NEXAURA/DEVELOPER/FUSE/dist/FUSE.exe"),
+        Path.home() / ".local/bin/FUSE",
+        Path("/usr/local/bin/FUSE"),
+    ]
+    for c in candidates:
+        try:
+            if c.exists() and c.stat().st_size > 1024*1024:
+                return c.resolve()
+        except: pass
+    # fallback to python
+    return None
+
+def get_autostart_exec():
+    exe = get_executable_path()
+    if exe:
+        # Use executable directly; for Linux need no args, for frozen we are good
+        return str(exe)
+    # fallback python
+    try:
+        fuse_py = Path(__file__).resolve()
+        return f"python3 {fuse_py}"
+    except:
+        return "python3 /mnt/NEXAURA/DEVELOPER/FUSE/fuse.py"
+
+def is_autostart_enabled():
+    plat = sys.platform
+    try:
+        if plat.startswith("linux"):
+            p = HOME / ".config/autostart/nexaura-fuse.desktop"
+            return p.exists()
+        elif plat == "win32":
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
+            try:
+                v,_ = winreg.QueryValueEx(key, "NEXAURA_FUSE")
+                return bool(v)
+            except: return False
+        elif plat == "darwin":
+            p = HOME / "Library/LaunchAgents/network.evercore.fuse.plist"
+            return p.exists()
+    except: return False
+    return False
+
+def set_autostart(enabled: bool):
+    plat = sys.platform
+    exe = get_autostart_exec()
+    try:
+        if plat.startswith("linux"):
+            p = HOME / ".config/autostart/nexaura-fuse.desktop"
+            if enabled:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                # Prefer exe if available, else python
+                icon = DEVELOPER / "FUSE/assets/logo-256.png"
+                if not icon.exists():
+                    icon = Path(__file__).parent / "assets/logo-256.png"
+                content = f"""[Desktop Entry]
+Name=NEXAURA FUSE
+Comment=Merge Windows and Linux workspaces - tray daemon
+Exec={exe}
+Icon={icon}
+Terminal=false
+Type=Application
+Categories=Development;Utility;
+StartupWMClass=FUSE
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=3
+Hidden=false
+"""
+                p.write_text(content)
+            else:
+                try: p.unlink()
+                except: pass
+            return True
+        elif plat == "win32":
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_WRITE)
+            if enabled:
+                winreg.SetValueEx(key, "NEXAURA_FUSE", 0, winreg.REG_SZ, f'"{exe}"')
+            else:
+                try: winreg.DeleteValue(key, "NEXAURA_FUSE")
+                except: pass
+            winreg.CloseKey(key)
+            return True
+        elif plat == "darwin":
+            p = HOME / "Library/LaunchAgents/network.evercore.fuse.plist"
+            if enabled:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                plist = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>network.evercore.fuse</string>
+<key>ProgramArguments</key><array><string>{exe}</string></array>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><false/>
+</dict></plist>"""
+                p.write_text(plist)
+            else:
+                try: p.unlink()
+                except: pass
+            return True
+    except Exception as e:
+        print(f"set_autostart err {e}")
+        import traceback; traceback.print_exc()
+        return False
+    return False
+
+# Load settings early and override DEVELOPER if custom
+_SETTINGS = load_settings()
+try:
+    _custom_dev = Path(_SETTINGS.get("developer_path", str(DEVELOPER))).expanduser()
+    if _custom_dev and str(_custom_dev) != str(DEVELOPER):
+        # Only override if path exists or parent exists (allow fresh)
+        if _custom_dev.exists() or _custom_dev.parent.exists():
+            DEVELOPER = _custom_dev
+except: pass
 SHARED_MODELS = DEVELOPER / "SHARED" / "MODELS"
 GLOBAL_MODELS = DEVELOPER / "Models" / "Global"
 OLLAMA_MODELS = DEVELOPER / "Models" / "Ollama"
+# Sync autostart to use executable (not python) if setting says enabled
+try:
+    if _SETTINGS.get("run_on_startup", True):
+        # Ensure autostart points to executable
+        cur_enabled = is_autostart_enabled()
+        # If enabled but points to python while exe exists, update
+        exe = get_executable_path()
+        if cur_enabled and exe:
+            # Check current desktop file Exec
+            p = HOME / ".config/autostart/nexaura-fuse.desktop"
+            if p.exists():
+                content = p.read_text()
+                if str(exe) not in content and "python3" in content:
+                    set_autostart(True)
+        elif not cur_enabled and _SETTINGS.get("run_on_startup"):
+            set_autostart(True)
+except: pass
 
 APPS = {
     "claude": {"src": HOME / ".config/Claude", "dst": DEVELOPER / "Claude"},
@@ -58,6 +236,153 @@ APP_LAUNCH = {
     "gemini": ["gemini"],
     "projects": ["xdg-open", str(HOME / "Documents")],
 }
+
+def refresh_developer_paths(new_dev: Path):
+    """Update globals when DEVELOPER changes (called after settings save)"""
+    global DEVELOPER, SHARED_MODELS, GLOBAL_MODELS, OLLAMA_MODELS, APPS
+    try:
+        DEVELOPER = Path(new_dev).expanduser().resolve()
+        SHARED_MODELS = DEVELOPER / "SHARED" / "MODELS"
+        GLOBAL_MODELS = DEVELOPER / "Models" / "Global"
+        OLLAMA_MODELS = DEVELOPER / "Models" / "Ollama"
+        # Update APPS dsts to new DEVELOPER
+        for k, cfg in APPS.items():
+            # dst is DEVELOPER / <relative>
+            try:
+                # keep relative part after original DEVELOPER
+                rel = Path(cfg["dst"]).name if Path(cfg["dst"]).parent == DEVELOPER else Path(cfg["dst"]).relative_to(DEVELOPER) if False else None
+            except: pass
+        # Rebuild APPS with new DEVELOPER
+        APPS.update({
+            "claude": {"src": HOME / ".config/Claude", "dst": DEVELOPER / "Claude"},
+            "opencode": {"src": HOME / ".config/opencode", "dst": DEVELOPER / "OpenCode/config"},
+            "opencode-share": {"src": HOME / ".local/share/opencode", "dst": DEVELOPER / "OpenCode/share"},
+            "opencode-cache": {"src": HOME / ".cache/opencode", "dst": DEVELOPER / "OpenCode/cache"},
+            "opencode-desktop": {"src": HOME / ".config/ai.opencode.desktop", "dst": DEVELOPER / "OpenCode/desktop"},
+            "zcode": {"src": HOME / ".config/ZCode", "dst": DEVELOPER / "Zcode/config"},
+            "zcode-share": {"src": HOME / ".zcode", "dst": DEVELOPER / "Zcode/share"},
+            "jetbrains-config": {"src": HOME / ".config/JetBrains", "dst": DEVELOPER / "JetBrains/config"},
+            "jetbrains-share": {"src": HOME / ".local/share/JetBrains", "dst": DEVELOPER / "JetBrains/share"},
+            "jetbrains-cache": {"src": HOME / ".cache/JetBrains", "dst": DEVELOPER / "JetBrains/cache"},
+            "lmstudio": {"src": HOME / ".var/app/ai.lmstudio.lm-studio/.lmstudio", "dst": DEVELOPER / "LMStudio/.lmstudio"},
+            "codex": {"src": HOME / ".codex", "dst": DEVELOPER / "Codex"},
+            "gemini": {"src": HOME / ".gemini", "dst": DEVELOPER / "Gemini"},
+            "projects": {"src": HOME / "Documents", "dst": DEVELOPER / "Projects"},
+        })
+        return True
+    except Exception as e:
+        print(f"refresh_developer_paths err {e}")
+        return False
+
+def show_settings_dialog(parent=None):
+    """GTK settings dialog: DEVELOPER folder, run on startup, etc."""
+    import gi
+    try:
+        gi.require_version('Gtk', '3.0')
+        from gi.repository import Gtk
+    except Exception as e:
+        print(f"Gtk not available for settings {e}")
+        return
+    settings = load_settings()
+    # Build dialog
+    dlg = Gtk.Dialog(title="FUSE Settings", transient_for=parent, flags=0)
+    dlg.set_default_size(520, 340)
+    dlg.set_border_width(10)
+    dlg.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OK, Gtk.ResponseType.OK)
+    dlg.set_position(Gtk.WindowPosition.CENTER)
+    try:
+        dlg.set_icon_from_file(str(Path(__file__).parent / "assets/logo-256.png"))
+    except: pass
+    content = dlg.get_content_area()
+    content.set_spacing(12)
+    # Title
+    lbl = Gtk.Label()
+    lbl.set_markup('<b>NEXAURA FUSE — Settings</b>')
+    lbl.set_halign(Gtk.Align.START)
+    content.pack_start(lbl, False, False, 4)
+    # DEVELOPER folder row
+    hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    l = Gtk.Label(label="DEVELOPER folder:")
+    l.set_halign(Gtk.Align.START)
+    l.set_size_request(140, -1)
+    hbox.pack_start(l, False, False, 0)
+    entry = Gtk.Entry()
+    entry.set_text(settings.get("developer_path", str(DEVELOPER)))
+    entry.set_hexpand(True)
+    entry.set_tooltip_text("Target folder for merged workspaces (e.g. /mnt/NEXAURA/DEVELOPER)")
+    hbox.pack_start(entry, True, True, 0)
+    btn_browse = Gtk.Button(label="Browse…")
+    hbox.pack_start(btn_browse, False, False, 0)
+    content.pack_start(hbox, False, False, 4)
+    # Autostart switch
+    hbox2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    l2 = Gtk.Label(label="Run on startup:")
+    l2.set_halign(Gtk.Align.START)
+    l2.set_size_request(140, -1)
+    hbox2.pack_start(l2, False, False, 0)
+    sw_autostart = Gtk.Switch()
+    sw_autostart.set_active(settings.get("run_on_startup", is_autostart_enabled()))
+    sw_autostart.set_halign(Gtk.Align.START)
+    hbox2.pack_start(sw_autostart, False, False, 0)
+    # Show exe path hint
+    exe_hint = Gtk.Label()
+    exe_hint.set_markup(f'<span size="small" color="#888">Exec: {get_autostart_exec()}</span>')
+    exe_hint.set_halign(Gtk.Align.START)
+    exe_hint.set_line_wrap(True)
+    exe_hint.set_max_width_chars(60)
+    vbox2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+    vbox2.pack_start(hbox2, False, False, 0)
+    vbox2.pack_start(exe_hint, False, False, 0)
+    content.pack_start(vbox2, False, False, 4)
+    # Start minimized
+    hbox3 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    l3 = Gtk.Label(label="Start minimized:")
+    l3.set_halign(Gtk.Align.START)
+    l3.set_size_request(140, -1)
+    hbox3.pack_start(l3, False, False, 0)
+    sw_min = Gtk.Switch()
+    sw_min.set_active(settings.get("start_minimized", False))
+    hbox3.pack_start(sw_min, False, False, 0)
+    content.pack_start(hbox3, False, False, 4)
+    # Info
+    info = Gtk.Label()
+    info.set_markup('<span size="small" color="#888">Changes to DEVELOPER require restart. Autostart uses the executable (dist/FUSE) when available, else python.</span>')
+    info.set_line_wrap(True)
+    info.set_max_width_chars(60)
+    info.set_halign(Gtk.Align.START)
+    content.pack_start(info, False, False, 6)
+    # Browse handler
+    def on_browse(btn):
+        chooser = Gtk.FileChooserDialog(title="Pick DEVELOPER folder", parent=dlg, action=Gtk.FileChooserAction.SELECT_FOLDER)
+        chooser.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, "Select", Gtk.ResponseType.OK)
+        chooser.set_current_folder(entry.get_text() or str(HOME))
+        if chooser.run() == Gtk.ResponseType.OK:
+            entry.set_text(chooser.get_filename())
+        chooser.destroy()
+    btn_browse.connect("clicked", on_browse)
+    dlg.show_all()
+    resp = dlg.run()
+    if resp == Gtk.ResponseType.OK:
+        new_dev = entry.get_text().strip()
+        new_autostart = sw_autostart.get_active()
+        new_min = sw_min.get_active()
+        # Save
+        settings["developer_path"] = new_dev
+        settings["run_on_startup"] = new_autostart
+        settings["start_minimized"] = new_min
+        save_settings(settings)
+        # Update autostart file to use executable
+        set_autostart(new_autostart)
+        # Try to refresh paths (will be reloaded on next restart)
+        try:
+            refresh_developer_paths(Path(new_dev))
+        except: pass
+        # Inform
+        msg = Gtk.MessageDialog(transient_for=dlg, flags=0, message_type=Gtk.MessageType.INFO, buttons=Gtk.ButtonsType.OK, text="Settings saved — restart FUSE to apply DEVELOPER change." if new_dev != str(DEVELOPER) else "Settings saved.")
+        msg.run()
+        msg.destroy()
+    dlg.destroy()
+    return
 
 def ensure_mounted():
     return DEVELOPER.exists()
@@ -370,7 +695,7 @@ def run_tray():
                         scr = Gdk.Screen.get_default()
                         sw, sh = scr.get_width(), scr.get_height()
                         tx = max(8, min(x - 160, sw - 320 - 8))
-                        ty = sh - 176 - 48 - 8
+                        ty = sh - 210 - 48 - 8
                         _tray_animate_show(win, tx, ty)
                     except:
                         try:
@@ -390,7 +715,7 @@ def run_tray():
                 win.set_keep_above(True)
                 win.set_type_hint(Gdk.WindowTypeHint.POPUP_MENU)
                 win.set_resizable(False)
-                win.set_default_size(320, 180)
+                win.set_default_size(320, 220)
                 win.set_app_paintable(True)
                 # Must set RGBA visual BEFORE realize/show for compositor transparency
                 try:
@@ -425,7 +750,7 @@ def run_tray():
                     scr = Gdk.Screen.get_default()
                     sw, sh = scr.get_width(), scr.get_height()
                     tx = max(8, min(x - 160, sw - 320 - 8))
-                    ty = sh - 180 - 48 - 8
+                    ty = sh - 220 - 48 - 8
                     win.move(int(tx), int(ty))
                 except:
                     try:
@@ -447,14 +772,40 @@ def run_tray():
                         act = ""
                     if act == "dashboard":
                         _show_dashboard()
-                        GLib.idle_add(win.hide)
+                        GLib.idle_add(lambda: _tray_animate_hide(win))
                     elif act == "merge":
                         for a in APPS: print(merge_app(a))
+                        GLib.idle_add(lambda: _tray_animate_hide(win))
+                    elif act == "settings":
+                        try:
+                            _show_dashboard()
+                            # After dashboard shows, switch to settings view via JS, plus offer native dialog
+                            def _open_settings_view():
+                                try:
+                                    wv = globals().get("_DARK_WEBVIEW")
+                                    if wv:
+                                        try:
+                                            wv.run_javascript("try{setView('settings'); loadSettings();}catch(e){}", None, None, None)
+                                        except:
+                                            try: wv.evaluate_javascript("setView('settings')", -1, None, None, None, None)
+                                            except: pass
+                                except: pass
+                                # also offer native dialog as alternative (non-blocking)
+                                # show_settings_dialog()  # optional, keep dashboard view as primary
+                                return False
+                            GLib.timeout_add(700, _open_settings_view)
+                        except:
+                            try: show_settings_dialog()
+                            except: pass
+                        GLib.idle_add(lambda: _tray_animate_hide(win))
                     elif act == "quit":
-                        try: win.hide()
-                        except: pass
+                        try: _tray_animate_hide(win)
+                        except:
+                            try: win.hide()
+                            except: pass
                         try: icon.stop()
                         except: pass
+                        import time as _t; _t.sleep(0.2)
                         os._exit(0)
                 mgr.connect("script-message-received::fuse", _on_msg)
                 settings = WebKit2.Settings()
@@ -556,7 +907,7 @@ def run_tray():
                 win.set_keep_above(True)
                 win.set_type_hint(Gdk.WindowTypeHint.POPUP_MENU)
                 win.set_resizable(False)
-                win.set_default_size(320, 180)
+                win.set_default_size(320, 220)
                 win.set_app_paintable(True)
                 try:
                     scr = win.get_screen()
@@ -782,6 +1133,16 @@ def run_tray():
         elif is_linux:
             # AppIndicator on GNOME/Wayland: native menu per HIG (both clicks show menu). Provide real actions.
             # Custom WebKit available via "Dashboard" item (second click) – proper per SNI spec.
+            def _open_settings(icon, item):
+                try:
+                    from gi.repository import GLib
+                    # Try dashboard settings view, else standalone dialog
+                    _show_dashboard()
+                    # Also show standalone dialog as fallback
+                    GLib.timeout_add(600, lambda: (show_settings_dialog(), False)[1])
+                except:
+                    try: show_settings_dialog()
+                    except: pass
             try:
                 menu = pystray.Menu(
                     pystray.MenuItem("Dashboard", lambda i, it: _show_dashboard()),
@@ -789,6 +1150,8 @@ def run_tray():
                     pystray.Menu.SEPARATOR,
                     pystray.MenuItem("Merge all", on_merge_all),
                     pystray.MenuItem("Sync models", on_sync_models),
+                    pystray.Menu.SEPARATOR,
+                    pystray.MenuItem("Settings…", _open_settings),
                     pystray.MenuItem("Quit", on_quit),
                 )
             except:
@@ -798,12 +1161,27 @@ def run_tray():
                     menu = None
         else:
             # Windows / macOS: native pystray menu
+            def _open_settings_win(icon, item):
+                try:
+                    # On Win/mac, try dashboard; fallback dialog not available (no Gtk), just open dashboard
+                    _show_dashboard()
+                except:
+                    pass
+                try:
+                    # Windows settings via dashboard or simple message
+                    import json as _js
+                    s = load_settings()
+                    # Toggle autostart as example
+                    pass
+                except: pass
             try:
                 menu = pystray.Menu(
                     pystray.MenuItem("Open DEVELOPER", on_open_developer),
                     pystray.MenuItem("Merge all", on_merge_all),
                     pystray.Menu.SEPARATOR,
                     pystray.MenuItem("Sync models", on_sync_models),
+                    pystray.Menu.SEPARATOR,
+                    pystray.MenuItem("Settings…", _open_settings_win),
                     pystray.MenuItem("Quit", on_quit),
                 )
             except:
@@ -1002,6 +1380,8 @@ def run_dark():
     # No extra container - window transparent + WebKit transparent + HTML rounded (12px)
     # keeps outer corners transparent (no black square). EventBox would reintroduce opaque square.
     _dash_container = None
+    # Store globally for tray -> settings view switch
+    globals()["_DARK_WEBVIEW"] = webview
 
     def on_fuse_message(mgr, msg):
         try:
@@ -1088,6 +1468,72 @@ def run_dark():
                 except Exception as e:
                     print(f"drag err {e}")
                 result = "dragging"
+            elif action == "get_settings":
+                try:
+                    s = load_settings()
+                    s["autostart_enabled"] = is_autostart_enabled()
+                    s["exe_path"] = get_autostart_exec()
+                    s["developer_exists"] = str(DEVELOPER.exists())
+                    s["current_developer"] = str(DEVELOPER)
+                    result = _json.dumps(s)
+                except Exception as e:
+                    result = _json.dumps({"error": str(e)})
+            elif action == "save_settings":
+                try:
+                    # data may contain developer_path, run_on_startup, start_minimized
+                    new_dev = data.get("developer_path") if isinstance(data, dict) else None
+                    run_on = data.get("run_on_startup") if isinstance(data, dict) else None
+                    start_min = data.get("start_minimized") if isinstance(data, dict) else None
+                    s = load_settings()
+                    changed_dev = False
+                    if new_dev and isinstance(new_dev, str) and new_dev.strip():
+                        s["developer_path"] = new_dev.strip()
+                        try:
+                            refresh_developer_paths(Path(new_dev.strip()))
+                            changed_dev = True
+                        except: pass
+                    if run_on is not None:
+                        s["run_on_startup"] = bool(run_on)
+                        set_autostart(bool(run_on))
+                    if start_min is not None:
+                        s["start_minimized"] = bool(start_min)
+                    save_settings(s)
+                    result = _json.dumps({"ok": True, "changed_dev": changed_dev, "developer": str(DEVELOPER), "autostart": is_autostart_enabled()})
+                except Exception as e:
+                    result = _json.dumps({"error": str(e)})
+            elif action == "pick_developer":
+                # Open Gtk FileChooser and return selected path
+                try:
+                    import gi
+                    gi.require_version('Gtk', '3.0')
+                    from gi.repository import Gtk
+                    def _pick():
+                        dlg = Gtk.FileChooserDialog(title="Pick DEVELOPER folder", action=Gtk.FileChooserAction.SELECT_FOLDER)
+                        dlg.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, "Select", Gtk.ResponseType.OK)
+                        cur = str(DEVELOPER)
+                        try: dlg.set_current_folder(cur)
+                        except: pass
+                        resp = dlg.run()
+                        sel = dlg.get_filename() if resp == Gtk.ResponseType.OK else ""
+                        dlg.destroy()
+                        return sel
+                    # Need to run on main thread
+                    sel = ""
+                    # Use GLib idle to run dialog? For now run directly if in main thread, else idle
+                    try:
+                        # If we are in WebKit callback (main thread), run directly
+                        sel = _pick()
+                    except: sel = ""
+                    result = _json.dumps({"path": sel})
+                except Exception as e:
+                    result = _json.dumps({"error": str(e), "path": ""})
+            elif action == "open_settings":
+                try:
+                    # Open standalone GTK settings dialog (blocks main loop via dialog run in idle)
+                    GLib.idle_add(lambda: (show_settings_dialog(win), False)[1])
+                    result = "opening"
+                except Exception as e:
+                    result = f"err {e}"
             elif action == "invoke":
                 # generic for pywebview compat: first arg is method
                 result = _json.dumps(get_status())
@@ -1129,13 +1575,63 @@ def run_dark():
                         res = sync_models_to_providers()
                         self.send_response(200); self.send_header("Content-type","text/plain"); self.send_header("Access-Control-Allow-Origin","*"); self.end_headers()
                         self.wfile.write(res.encode())
+                    elif parsed.path == "/api/settings":
+                        if self.command == "GET":
+                            s = load_settings()
+                            s["autostart_enabled"] = is_autostart_enabled()
+                            s["exe_path"] = get_autostart_exec()
+                            s["current_developer"] = str(DEVELOPER)
+                            self.send_response(200); self.send_header("Content-type","application/json"); self.send_header("Access-Control-Allow-Origin","*"); self.end_headers()
+                            self.wfile.write(_js.dumps(s).encode())
+                        else:  # POST
+                            length = int(self.headers.get('Content-Length', 0))
+                            body = self.rfile.read(length).decode() if length else "{}"
+                            try:
+                                data = _js.loads(body)
+                                if "developer_path" in data:
+                                    s = load_settings()
+                                    s["developer_path"] = data["developer_path"]
+                                    refresh_developer_paths(Path(data["developer_path"]))
+                                    save_settings(s)
+                                if "run_on_startup" in data:
+                                    set_autostart(bool(data["run_on_startup"]))
+                                    s = load_settings(); s["run_on_startup"] = bool(data["run_on_startup"]); save_settings(s)
+                                self.send_response(200); self.send_header("Content-type","application/json"); self.send_header("Access-Control-Allow-Origin","*"); self.end_headers()
+                                self.wfile.write(b'{"ok":true}')
+                            except Exception as e:
+                                self.send_response(500); self.end_headers(); self.wfile.write(str(e).encode())
                     elif parsed.path == "/api/open":
                         subprocess.Popen(["xdg-open", str(DEVELOPER)])
                         self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+                    # Handle POST for /api/settings via do_POST
                     else:
                         self.send_response(404); self.end_headers()
                 except Exception as e:
                     self.send_response(500); self.end_headers(); self.wfile.write(str(e).encode())
+            def do_POST(self):
+                parsed = urllib.parse.urlparse(self.path)
+                if parsed.path == "/api/settings":
+                    length = int(self.headers.get('Content-Length', 0))
+                    body = self.rfile.read(length).decode() if length else "{}"
+                    try:
+                        data = _js.loads(body)
+                        s = load_settings()
+                        if "developer_path" in data:
+                            s["developer_path"] = data["developer_path"]
+                            try: refresh_developer_paths(Path(data["developer_path"]))
+                            except: pass
+                        if "run_on_startup" in data:
+                            s["run_on_startup"] = bool(data["run_on_startup"])
+                            set_autostart(bool(data["run_on_startup"]))
+                        if "start_minimized" in data:
+                            s["start_minimized"] = bool(data["start_minimized"])
+                        save_settings(s)
+                        self.send_response(200); self.send_header("Content-type","application/json"); self.send_header("Access-Control-Allow-Origin","*"); self.end_headers()
+                        self.wfile.write(b'{"ok":true}')
+                    except Exception as e:
+                        self.send_response(500); self.end_headers(); self.wfile.write(str(e).encode())
+                else:
+                    self.send_response(404); self.end_headers()
             def log_message(self, format, *args): pass
         try:
             with socketserver.TCPServer(("127.0.0.1", 8765), H) as httpd:

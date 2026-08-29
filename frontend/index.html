@@ -102,6 +102,9 @@
   .icon-btn svg{width:12px;height:12px;stroke-width:1.8}
   .icon-btn.reveal{background:transparent;color:var(--text-muted)}
   .icon-btn.reveal:hover{background:var(--hover);color:#fff}
+  .switch .slider:before{content:"";position:absolute;height:16px;width:16px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px #0005}
+  .switch input:checked + .slider{background:var(--success)}
+  .switch input:checked + .slider:before{transform:translateX(18px)}
 </style>
 </head>
 <body>
@@ -133,6 +136,7 @@
       <div class="nav-item" data-view="models"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M8 2L13 4.5V11.5L8 14L3 11.5V4.5L8 2Z"/><path d="M8 14V8"/><path d="M3 4.5L8 8L13 4.5"/></svg> SHARED / MODELS <span class="nav-count" id="count-models">1</span></div>
       <div class="nav-item" data-view="developer"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M3 3H13V13H3z"/><path d="M3 6H13M6 13V6"/></svg> DEVELOPER</div>
       <div class="nav-item" data-view="logs"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M3 4H13M3 8H13M3 12H9"/></svg> Logs</div>
+      <div class="nav-item" data-view="settings"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M8 3a1 1 0 0 1 1 1v1.07a3 3 0 0 1 .86.5l.77-.77a1 1 0 1 1 1.41 1.41l-.77.77a3 3 0 0 1 .5.86H13a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1h-1.07a3 3 0 0 1-.5.86l.77.77a1 1 0 1 1-1.41 1.41l-.77-.77a3 3 0 0 1-.86.5V13a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1.07a3 3 0 0 1-.86-.5l-.77.77a1 1 0 1 1-1.41-1.41l.77-.77a3 3 0 0 1-.5-.86H3a1 1 0 0 1-1-1v-1a1 1 0 0 1 1-1h1.07a3 3 0 0 1 .5-.86l-.77-.77A1 1 0 1 1 4.22 5l.77.77a3 3 0 0 1 .86-.5V4a1 1 0 0 1 1-1h1z"/><circle cx="8" cy="8" r="1.8"/></svg> Settings</div>
     </div>
     <div class="nav-section">
       <div class="nav-title">Providers</div>
@@ -168,6 +172,39 @@
       <div class="view" id="view-logs">
         <div class="summary"><strong>Logs</strong> — /tmp/nexaura-fuse.log</div>
         <div class="list" style="padding:14px;background:var(--layer-01);font-family:var(--font-mono);font-size:11px;color:var(--text-muted)" id="logs-view">Select an app and use Open / Reveal. Logs removed — check /tmp/nexaura-fuse.log for details.</div>
+      </div>
+      <div class="view" id="view-settings">
+        <div class="summary"><strong>Settings</strong> — FUSE configuration & autostart</div>
+        <div style="display:flex;flex-direction:column;gap:16px;padding:16px;background:var(--layer-01);border:1px solid var(--border);border-radius:10px;">
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <label style="font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--text-faint);text-transform:uppercase;">Target DEVELOPER folder</label>
+            <div style="display:flex;gap:8px;">
+              <input id="settings-dev" style="flex:1;height:32px;padding:0 10px;background:var(--bg-deep);border:1px solid var(--border);border-radius:8px;color:#fff;font-family:var(--font-mono);font-size:12px;" placeholder="/mnt/NEXAURA/DEVELOPER"/>
+              <button class="icon-btn" id="settings-browse" style="height:32px;min-width:80px;">Browse…</button>
+            </div>
+            <div style="font-size:11px;color:var(--text-faint);">Current: <span id="settings-current" style="font-family:var(--font-mono);color:var(--text-muted);"></span> • Exists: <span id="settings-exists"></span> • <span id="settings-exe" style="font-family:var(--font-mono);font-size:10px;word-break:break-all;"></span></div>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--bg-base);border:1px solid var(--border);border-radius:8px;">
+            <div>
+              <div style="font-size:12px;font-weight:600;color:#fff;">Run on startup</div>
+              <div style="font-size:11px;color:var(--text-muted);">Launch FUSE when you log in (uses executable when available)</div>
+            </div>
+            <label class="switch" style="position:relative;display:inline-block;width:40px;height:22px;"><input type="checkbox" id="settings-autostart" style="opacity:0;width:0;height:0;"><span class="slider" style="position:absolute;cursor:pointer;inset:0;background:var(--grey-800);border-radius:999px;transition:.2s;"></span></label>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--bg-base);border:1px solid var(--border);border-radius:8px;">
+            <div>
+              <div style="font-size:12px;font-weight:600;color:#fff;">Start minimized</div>
+              <div style="font-size:11px;color:var(--text-muted);">Hide dashboard on launch (tray only)</div>
+            </div>
+            <label class="switch" style="position:relative;display:inline-block;width:40px;height:22px;"><input type="checkbox" id="settings-minimized" style="opacity:0;width:0;height:0;"><span class="slider" style="position:absolute;cursor:pointer;inset:0;background:var(--grey-800);border-radius:999px;transition:.2s;"></span></label>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn-primary" id="settings-save" style="flex:1;">Save settings</button>
+            <button class="btn-ghost" id="settings-cancel">Reset</button>
+          </div>
+          <div id="settings-msg" style="font-size:11px;color:var(--success);min-height:16px;word-break:break-word;"></div>
+          <div style="font-size:10px;color:var(--text-faint);">Executable: <span id="settings-exe2" style="font-family:var(--font-mono);"></span></div>
+        </div>
       </div>
     </div>
   </main>
@@ -265,7 +302,86 @@ document.getElementById("drag-region").addEventListener("mousedown",e=>{
   if(e.button!==0) return;
   try{ window.webkit.messageHandlers.fuse.postMessage(JSON.stringify({action:"drag",x:e.screenX,y:e.screenY})); }catch{}
 });
-renderApps(); renderModels(); renderDevel(); refreshStatus(); setInterval(refreshStatus,3000);
+// Settings handling
+async function loadSettings(){
+  try{
+    const s = await callBackend('get_settings');
+    // callBackend returns json string via _fuse_cb, need to parse
+    let data = s;
+    if(typeof s === 'string'){ try{ data = JSON.parse(s); }catch{} }
+    // also try fetch fallback
+    if(!data || !data.developer_path){
+      const r = await fetch('http://127.0.0.1:8765/api/settings').then(x=>x.json()).catch(()=>null);
+      if(r) data = r;
+    }
+    if(data){
+      document.getElementById('settings-dev').value = data.developer_path || data.current_developer || '';
+      document.getElementById('settings-current').textContent = data.current_developer || data.developer_path || '';
+      document.getElementById('settings-exists').textContent = data.developer_exists || data.current_developer || '';
+      document.getElementById('settings-exists').style.color = (data.developer_exists==='True' || data.current_developer) ? 'var(--success)' : 'var(--text-faint)';
+      document.getElementById('settings-exe').textContent = 'Exec: ' + (data.exe_path || '');
+      document.getElementById('settings-exe2').textContent = data.exe_path || '';
+      document.getElementById('settings-autostart').checked = !!data.run_on_startup || !!data.autostart_enabled;
+      document.getElementById('settings-minimized').checked = !!data.start_minimized;
+    }
+  }catch(e){ console.log('loadSettings err',e); }
+}
+async function saveSettings(){
+  const btn = document.getElementById('settings-save');
+  const msg = document.getElementById('settings-msg');
+  btn.textContent = 'Saving…';
+  const payload = {
+    developer_path: document.getElementById('settings-dev').value.trim(),
+    run_on_startup: document.getElementById('settings-autostart').checked,
+    start_minimized: document.getElementById('settings-minimized').checked
+  };
+  try{
+    let res = "";
+    if(window.webkit && window.webkit.messageHandlers.fuse){
+      res = await new Promise(r=>{
+        window._fuse_cb = (x)=>r(x);
+        window.webkit.messageHandlers.fuse.postMessage(JSON.stringify({action:'save_settings', developer_path: payload.developer_path, run_on_startup: payload.run_on_startup, start_minimized: payload.start_minimized, cb:'_fuse_cb'}));
+      });
+    } else {
+      const rr = await fetch('http://127.0.0.1:8765/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+      res = await rr.text();
+    }
+    let j = {}; try{ j = JSON.parse(res); }catch{}
+    if(j.ok || res.includes('ok')){
+      msg.textContent = 'Settings saved — restart FUSE to apply DEVELOPER change. Autostart: ' + (payload.run_on_startup ? 'enabled' : 'disabled') + ' (' + (document.getElementById('settings-exe').textContent||'') + ')';
+      msg.style.color = 'var(--success)';
+      setTimeout(()=> loadSettings(), 500);
+    } else {
+      msg.textContent = 'Save response: ' + res;
+      msg.style.color = 'var(--text-muted)';
+    }
+  }catch(e){
+    msg.textContent = 'Save err: ' + e;
+    msg.style.color = '#e81123';
+  }
+  btn.textContent = 'Save settings';
+}
+document.getElementById('settings-browse')?.addEventListener('click', async()=>{
+  try{
+    if(window.webkit && window.webkit.messageHandlers.fuse){
+      const r = await new Promise(res=>{
+        window._fuse_cb = (x)=>res(x);
+        window.webkit.messageHandlers.fuse.postMessage(JSON.stringify({action:'pick_developer', cb:'_fuse_cb'}));
+      });
+      let j={}; try{ j=JSON.parse(r); }catch{}
+      if(j.path) document.getElementById('settings-dev').value = j.path;
+    } else {
+      const p = prompt('Enter DEVELOPER path:', document.getElementById('settings-dev').value);
+      if(p) document.getElementById('settings-dev').value = p;
+    }
+  }catch(e){ console.log(e); }
+});
+document.getElementById('settings-save')?.addEventListener('click', saveSettings);
+document.getElementById('settings-cancel')?.addEventListener('click', loadSettings);
+// hook settings nav to load
+document.querySelector('[data-view="settings"]')?.addEventListener('click', loadSettings);
+// also expose open_settings from Python
+renderApps(); renderModels(); renderDevel(); refreshStatus(); setInterval(refreshStatus,3000); loadSettings();
 </script>
 </body>
 </html>
