@@ -218,7 +218,7 @@ import pathlib
 p=pathlib.Path("/usr/share/gnome-shell/extensions/zorin-taskbar@zorinos.com/appIcons.js")
 t=p.read_text()
 old="    activate(button, modifiers, handleAsGrouped) {"
-new="    activate(button, modifiers, handleAsGrouped) {\n        // NEXAURA FUSE: taskbar spark click -> custom tray via DBUS (both left/right)\n        try {\n            let isFuse = false;\n            try { isFuse = this.app && this.app.get_id && this.app.get_id().includes(\"FUSE\"); } catch(e) {}\n            if (!isFuse) try { isFuse = this.window && this.window.get_wm_class && this.window.get_wm_class() === \"FUSE\"; } catch(e) {}\n            if (!isFuse) try { isFuse = this.app && this.app.get_name && this.app.get_name().includes(\"FUSE\"); } catch(e) {}\n            if (isFuse) {\n                try {\n                    imports.gi.Gio.DBus.session.call(\"org.nexaura.FUSE\", \"/org/nexaura/FUSE\", \"org.nexaura.FUSE\", \"ToggleTray\", null, null, imports.gi.Gio.DBusCallFlags.NONE, -1, null, null);\n                } catch(e) { try { imports.gi.Gio.DBus.session.call(\"org.nexaura.FUSE\", \"/org/nexaura/FUSE\", \"org.nexaura.FUSE\", \"ShowTray\", null, null, imports.gi.Gio.DBusCallFlags.NONE, -1, null, null); } catch(e2) {} }\n                return;\n            }\n        } catch(e) {}\n'''
+new="    activate(button, modifiers, handleAsGrouped) {\n        // NEXAURA FUSE: taskbar spark click -> custom tray via DBUS (both left/right)\n        try {\n            let isFuse = false;\n            try { isFuse = this.app && this.app.get_id && this.app.get_id().includes(\"FUSE\"); } catch(e) {}\n            if (!isFuse) try { isFuse = this.window && this.window.get_wm_class && this.window.get_wm_class() === \"FUSE\"; } catch(e) {}\n            if (!isFuse) try { isFuse = this.app && this.app.get_name && this.app.get_name().includes(\"FUSE\"); } catch(e) {}\n            if (isFuse) {\n                try {\n                    imports.gi.Gio.DBus.session.call(\"org.nexaura.FUSE\", \"/org/nexaura/FUSE\", \"org.nexaura.FUSE\", \"ToggleTray\", null, null, imports.gi.Gio.DBusCallFlags.NONE, -1, null, null);\n                } catch(e) { try { imports.gi.Gio.DBus.session.call(\"org.nexaura.FUSE\", \"/org/nexaura/FUSE\", \"org.nexaura.FUSE\", \"ShowTray\", null, null, imports.gi.Gio.DBusCallFlags.NONE, -1, null, null); } catch(e2) {} }\n                return;\n            }\n        } catch(e) {}\n"""
                     if old in t:
                         t=t.replace(old,new)
                         p.write_text(t)
@@ -479,14 +479,14 @@ new="    activate(button, modifiers, handleAsGrouped) {\n        // NEXAURA FUSE
         # Exposes org.nexaura.FUSE at /org/nexaura/FUSE with ShowTray/ToggleTray/HideTray
         try:
             from gi.repository import Gio as _Gio2, GLib as _GLib2b
-            _dbus_xml = '''
+            _dbus_xml = """
             <node>
               <interface name="org.nexaura.FUSE">
                 <method name="ShowTray"/>
                 <method name="ToggleTray"/>
                 <method name="HideTray"/>
               </interface>
-            </node>'''
+            </node>"""
             _dbus_node2 = _Gio2.DBusNodeInfo.new_for_xml(_dbus_xml)
             _dbus_iface2 = _dbus_node2.lookup_interface("org.nexaura.FUSE")
             def _dbus_call(conn, sender, obj_path, iface_name, method_name, params, invocation):
