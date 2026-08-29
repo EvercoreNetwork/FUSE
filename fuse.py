@@ -285,6 +285,199 @@ def refresh_developer_paths(new_dev: Path):
         print(f"refresh_developer_paths err {e}")
         return False
 
+def _create_dashboard_window():
+    """Create and return (win, webview) for dashboard - used by run_dark and tray's _show_dashboard"""
+    import gi
+    gi.require_version('Gtk', '3.0')
+    gi.require_version('WebKit2', '4.1')
+    from gi.repository import Gtk, Gdk, WebKit2, GLib
+    import json as _js
+    win = Gtk.Window(title="NEXAURA FUSE")
+    win.set_default_size(1020, 680)
+    win.set_position(Gtk.WindowPosition.CENTER)
+    win.set_skip_taskbar_hint(False)
+    win.set_skip_pager_hint(False)
+    win.set_wmclass("FUSE","FUSE")
+    win.set_decorated(False)
+    win.set_resizable(True)
+    globals()["_DARK_WIN"] = win
+    try:
+        import cairo as _cairo2
+        scr2 = win.get_screen()
+        vis2 = scr2.get_rgba_visual()
+        if vis2:
+            win.set_visual(vis2)
+        win.set_app_paintable(True)
+        def _d2draw(w, cr):
+            cr.set_source_rgba(0,0,0,0)
+            cr.set_operator(_cairo2.Operator.SOURCE)
+            cr.paint()
+            cr.set_operator(_cairo2.Operator.OVER)
+            return False
+        win.connect("draw", _d2draw)
+        css2 = b"window, decoration, .background, window.background { background-color: transparent; background: transparent; border: none; box-shadow: none; } decoration, window.csd decoration { border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.08); background: transparent; }"
+        prov2 = Gtk.CssProvider()
+        prov2.load_from_data(css2)
+        Gtk.StyleContext.add_provider_for_screen(scr2, prov2, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        try: win.get_style_context().add_class("csd")
+        except: pass
+    except: pass
+    try:
+        ip2 = DEVELOPER / "FUSE/assets/logo-256.png"
+        if not ip2.exists():
+            base2 = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
+            for cand2 in [base2 / "assets/logo-256.png", Path(__file__).parent / "assets/logo-256.png"]:
+                if cand2.exists():
+                    ip2 = cand2; break
+        if ip2.exists():
+            win.set_icon_from_file(str(ip2))
+    except: pass
+    mgr2 = WebKit2.UserContentManager()
+    mgr2.register_script_message_handler("fuse")
+    settings2 = WebKit2.Settings()
+    try:
+        settings2.set_enable_javascript(True)
+        settings2.set_allow_file_access_from_file_urls(True)
+        settings2.set_allow_universal_access_from_file_urls(True)
+        settings2.set_enable_developer_extras(True)
+    except: pass
+    wv2 = WebKit2.WebView.new_with_user_content_manager(mgr2)
+    wv2.set_settings(settings2)
+    try:
+        rgba2 = Gdk.RGBA()
+        rgba2.parse("rgba(0,0,0,0)")
+        wv2.set_background_color(rgba2)
+        wv2.set_app_paintable(True)
+    except: pass
+    globals()["_DARK_WEBVIEW"] = wv2
+    # Full message handler (same as run_dark)
+    def _on_msg2(mgr, msg):
+        try:
+            try: js = msg.get_js_value()
+            except: js = msg.get_jsc_value()
+            raw = js.to_string() if hasattr(js,"to_string") else str(js)
+            data2 = _js.loads(raw) if isinstance(raw, str) else {}
+            if isinstance(data2, str):
+                try: data2 = _js.loads(data2)
+                except: data2 = {"action": data2}
+        except:
+            data2 = {}
+        act2 = data2.get("action") if isinstance(data2, dict) else str(data2)
+        app2 = data2.get("app") if isinstance(data2, dict) else None
+        cb2 = data2.get("cb") if isinstance(data2, dict) else None
+        res2 = ""
+        try:
+            if act2 == "get_status":
+                res2 = _js.dumps(get_status())
+            elif act2 == "merge":
+                res2 = merge_app(app2) if app2 else "no app"
+            elif act2 == "open":
+                launched2 = False
+                if app2 and app2 in APP_LAUNCH:
+                    for cmd2 in APP_LAUNCH[app2]:
+                        try:
+                            parts2 = cmd2.split() if " " in cmd2 and not cmd2.startswith("/") else [cmd2]
+                            parts2 = [__import__("os").path.expanduser(p) for p in parts2]
+                            if len(parts2)==1 and "/" not in parts2[0]:
+                                if __import__("subprocess").run(["which", parts2[0]], stdout=__import__("subprocess").DEVNULL, stderr=__import__("subprocess").DEVNULL).returncode != 0:
+                                    continue
+                            __import__("subprocess").Popen(parts2, stdout=__import__("subprocess").DEVNULL, stderr=__import__("subprocess").DEVNULL, start_new_session=True)
+                            launched2 = True
+                            res2 = f"launched {cmd2}"
+                            break
+                        except: continue
+                if not launched2:
+                    cfg2 = APPS.get(app2) if app2 else None
+                    tgt2 = str(cfg2["dst"] if cfg2 and cfg2["dst"].exists() else cfg2["src"] if cfg2 else DEVELOPER)
+                    try: __import__("subprocess").Popen(["xdg-open", tgt2])
+                    except: pass
+                    res2 = f"opened {tgt2}" if not launched2 else res2
+            elif act2 == "reveal":
+                cfg2 = APPS.get(app2) if app2 else None
+                tgt2 = str(cfg2["dst"] if cfg2 and cfg2["dst"].exists() else cfg2["src"] if cfg2 else DEVELOPER)
+                try:
+                    uri2 = Path(tgt2).as_uri()
+                    __import__("subprocess").Popen(["dbus-send","--session","--dest=org.freedesktop.FileManager1","--type=method_call","/org/freedesktop/FileManager1","org.freedesktop.FileManager1.ShowItems",f"array:string:{uri2}","string:"], stdout=__import__("subprocess").DEVNULL, stderr=__import__("subprocess").DEVNULL)
+                    __import__("subprocess").Popen(["gio","open", str(Path(tgt2).parent)], stdout=__import__("subprocess").DEVNULL, stderr=__import__("subprocess").DEVNULL)
+                except:
+                    __import__("subprocess").Popen(["xdg-open", str(Path(tgt2).parent)])
+                res2 = f"revealed {tgt2}"
+            elif act2 == "sync":
+                res2 = sync_models_to_providers()
+            elif act2 == "open_developer":
+                __import__("subprocess").Popen(["xdg-open", str(DEVELOPER)])
+                res2 = "opened"
+            elif act2 == "close":
+                GLib.idle_add(win.hide)
+                res2 = "hidden"
+            elif act2 == "minimize":
+                GLib.idle_add(win.iconify)
+                res2 = "minimized"
+            elif act2 == "drag":
+                try:
+                    GLib.idle_add(lambda: win.begin_move_drag(1, int(data2.get("x",100)), int(data2.get("y",100)), 0))
+                except: pass
+                res2 = "dragging"
+            elif act2 == "get_settings":
+                s2 = load_settings()
+                s2["autostart_enabled"] = is_autostart_enabled()
+                s2["exe_path"] = get_autostart_exec()
+                s2["developer_exists"] = str(DEVELOPER.exists())
+                s2["current_developer"] = str(DEVELOPER)
+                res2 = _js.dumps(s2)
+            elif act2 == "save_settings":
+                new_dev2 = data2.get("developer_path") if isinstance(data2, dict) else None
+                run_on2 = data2.get("run_on_startup") if isinstance(data2, dict) else None
+                start_min2 = data2.get("start_minimized") if isinstance(data2, dict) else None
+                s2 = load_settings()
+                ch2 = False
+                if new_dev2 and isinstance(new_dev2, str) and new_dev2.strip():
+                    s2["developer_path"] = new_dev2.strip()
+                    try:
+                        refresh_developer_paths(Path(new_dev2.strip()))
+                        ch2 = True
+                    except: pass
+                if run_on2 is not None:
+                    s2["run_on_startup"] = bool(run_on2)
+                    set_autostart(bool(run_on2))
+                if start_min2 is not None:
+                    s2["start_minimized"] = bool(start_min2)
+                save_settings(s2)
+                res2 = _js.dumps({"ok": True, "changed_dev": ch2, "developer": str(DEVELOPER), "autostart": is_autostart_enabled()})
+            elif act2 == "pick_developer":
+                try:
+                    dlg2 = Gtk.FileChooserDialog(title="Pick DEVELOPER folder", action=Gtk.FileChooserAction.SELECT_FOLDER)
+                    dlg2.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, "Select", Gtk.ResponseType.OK)
+                    dlg2.set_current_folder(str(DEVELOPER))
+                    resp2 = dlg2.run()
+                    sel2 = dlg2.get_filename() if resp2 == Gtk.ResponseType.OK else ""
+                    dlg2.destroy()
+                    res2 = _js.dumps({"path": sel2})
+                except Exception as e:
+                    res2 = _js.dumps({"error": str(e), "path": ""})
+            elif act2 == "open_settings":
+                GLib.idle_add(lambda: (show_settings_dialog(win), False)[1])
+                res2 = "opening"
+            else:
+                res2 = f"unknown {act2}"
+        except Exception as e:
+            res2 = f"err {e}"
+        if cb2:
+            esc2 = _js.dumps(res2)
+            js_code2 = f"if(window['{cb2}']) window['{cb2}']({esc2}); else if(window._fuse_cb) window._fuse_cb({esc2});"
+            try: wv2.run_javascript(js_code2, None, None, None)
+            except:
+                try: wv2.evaluate_javascript(js_code2, -1, None, None, None, None)
+                except: pass
+    mgr2.connect("script-message-received::fuse", _on_msg2)
+    html2 = DEVELOPER / "FUSE/frontend/index.html"
+    if not html2.exists():
+        html2 = Path(__file__).parent / "frontend/index.html"
+    wv2.load_uri(html2.as_uri() if html2.exists() else "about:blank")
+    win.add(wv2)
+    win.connect("delete-event", lambda w,e: (w.hide_on_delete(), True)[1])
+    return win, wv2
+
 def show_settings_dialog(parent=None):
     """GTK settings dialog: DEVELOPER folder, run on startup, etc."""
     import gi
@@ -553,22 +746,56 @@ def run_tray():
         # So we show a custom Gtk/WebKit popup at bottom-right on click, with flex justify-content:space-between.
         custom_tray_win = {"win": None}
 
-        def _show_dashboard():
+        def _show_dashboard(_open_settings=False):
             try:
                 gwin = globals().get("_DARK_WIN")
                 if gwin:
                     from gi.repository import GLib
-                    GLib.idle_add(lambda: (gwin.show_all(), gwin.present(), gwin.deiconify(), False)[3])
-                    GLib.idle_add(lambda: gwin.present_with_time(0))
+                    GLib.idle_add(lambda: (gwin.show_all(), gwin.present(), gwin.deiconify(), gwin.present_with_time(0), False)[4])
+                    try:
+                        if _open_settings:
+                            gv = globals().get("_DARK_WEBVIEW")
+                            if gv:
+                                GLib.timeout_add(300, lambda: (gv.run_javascript("try{setView('settings')}catch(e){}", None,None,None), False)[1])
+                    except: pass
                     return
             except: pass
             try:
+                from gi.repository import GLib, Gtk
+                def _create_dash():
+                    try:
+                        win2, wv2 = _create_dashboard_window()
+                        win2.show_all()
+                        win2.present()
+                        win2.deiconify()
+                        win2.present_with_time(0)
+                        if _open_settings:
+                            try:
+                                GLib.timeout_add(350, lambda: (wv2.run_javascript("try{setView('settings')}catch(e){}", None,None,None), False)[1])
+                            except: pass
+                        _log("dashboard: created from tray via _create_dashboard_window")
+                    except Exception as e:
+                        _log(f"_create_dash err {e}")
+                        import traceback; traceback.print_exc()
+                        try:
+                            import subprocess
+                            subprocess.Popen(["wmctrl","-a","NEXAURA FUSE"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        except: pass
+                    return False
+                try:
+                    if Gtk.main_level() > 0:
+                        GLib.idle_add(_create_dash)
+                    else:
+                        _create_dash()
+                except:
+                    GLib.idle_add(_create_dash)
+                return
+            except Exception as e:
+                import traceback; traceback.print_exc()
+            try:
+                import subprocess
                 subprocess.Popen(["wmctrl","-a","NEXAURA FUSE"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 subprocess.Popen(["xdotool","search","--name","NEXAURA FUSE","windowactivate"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except: pass
-            try:
-                if not Path("/tmp/nexaura-fuse.lock").exists():
-                    subprocess.Popen([sys.executable, str(Path(__file__).parent / "fuse.py"), "--dark"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except: pass
 
         def _get_pointer_pos():
@@ -789,22 +1016,7 @@ def run_tray():
                         GLib.idle_add(lambda: _tray_animate_hide(win))
                     elif act == "settings":
                         try:
-                            _show_dashboard()
-                            # After dashboard shows, switch to settings view via JS, plus offer native dialog
-                            def _open_settings_view():
-                                try:
-                                    wv = globals().get("_DARK_WEBVIEW")
-                                    if wv:
-                                        try:
-                                            wv.run_javascript("try{setView('settings'); loadSettings();}catch(e){}", None, None, None)
-                                        except:
-                                            try: wv.evaluate_javascript("setView('settings')", -1, None, None, None, None)
-                                            except: pass
-                                except: pass
-                                # also offer native dialog as alternative (non-blocking)
-                                # show_settings_dialog()  # optional, keep dashboard view as primary
-                                return False
-                            GLib.timeout_add(700, _open_settings_view)
+                            _show_dashboard(True)
                         except:
                             try: show_settings_dialog()
                             except: pass
@@ -956,6 +1168,12 @@ def run_tray():
                     if act == "dashboard":
                         _show_dashboard()
                         GLib.idle_add(lambda: _tray_animate_hide(win))
+                    elif act == "settings":
+                        try: _show_dashboard(True)
+                        except:
+                            try: show_settings_dialog()
+                            except: pass
+                        GLib.idle_add(lambda: _tray_animate_hide(win))
                     elif act == "merge":
                         for a in APPS: print(merge_app(a))
                     elif act == "quit":
@@ -1032,6 +1250,8 @@ def run_tray():
                 <method name="ShowTray"/>
                 <method name="ToggleTray"/>
                 <method name="HideTray"/>
+                <method name="ShowDashboard"/>
+                <method name="ShowSettings"/>
               </interface>
             </node>"""
             _dbus_node2 = _Gio2.DBusNodeInfo.new_for_xml(_dbus_xml)
@@ -1042,6 +1262,12 @@ def run_tray():
                 try:
                     if method_name in ("ShowTray", "ToggleTray"):
                         _GLib2b.idle_add(lambda: (_show_custom_tray(), False)[1])
+                        invocation.return_value(None)
+                    elif method_name == "ShowDashboard":
+                        _GLib2b.idle_add(lambda: (_show_dashboard(), False)[1])
+                        invocation.return_value(None)
+                    elif method_name == "ShowSettings":
+                        _GLib2b.idle_add(lambda: (_show_dashboard(True), False)[1])
                         invocation.return_value(None)
                     elif method_name == "HideTray":
                         try:
@@ -1146,11 +1372,7 @@ def run_tray():
             # Custom WebKit available via "Dashboard" item (second click) – proper per SNI spec.
             def _open_settings(icon, item):
                 try:
-                    from gi.repository import GLib
-                    # Try dashboard settings view, else standalone dialog
-                    _show_dashboard()
-                    # Also show standalone dialog as fallback
-                    GLib.timeout_add(600, lambda: (show_settings_dialog(), False)[1])
+                    _show_dashboard(True)
                 except:
                     try: show_settings_dialog()
                     except: pass
@@ -1174,8 +1396,7 @@ def run_tray():
             # Windows / macOS: native pystray menu
             def _open_settings_win(icon, item):
                 try:
-                    # On Win/mac, try dashboard; fallback dialog not available (no Gtk), just open dashboard
-                    _show_dashboard()
+                    _show_dashboard(True)
                 except:
                     pass
                 try:
