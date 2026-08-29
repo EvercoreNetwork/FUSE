@@ -156,6 +156,61 @@ def run_tray():
             sys.stderr.write(line); sys.stderr.flush()
         except: pass
     _log(f"FUSE starting pid={os.getpid()} DEVELOPER={DEVELOPER} exists={DEVELOPER.exists()}")
+    # Auto-patch GNOME Shell extension so left/right both open custom tray (Linux/Zorin)
+    try:
+        if sys.platform.startswith("linux"):
+            js_path = Path("/usr/share/gnome-shell/extensions/zorin-appindicator@zorinos.com/indicatorStatusIcon.js")
+            if js_path.exists():
+                txt = js_path.read_text()
+                if "NEXAURA FUSE: left/right both open custom" not in txt:
+                    _log("Shell extension not patched, attempting pkexec patch for left/right clicks")
+                    try:
+                        import subprocess as _sp
+                        # Use pkexec to patch; script is embedded to avoid external file
+                        patch_py = r'''
+import pathlib
+p=pathlib.Path("/usr/share/gnome-shell/extensions/zorin-appindicator@zorinos.com/indicatorStatusIcon.js")
+t=p.read_text()
+old="""    vfunc_button_press_event(event) {
+        if (this._waitDoubleClickPromise)
+            this._waitDoubleClickPromise.cancel();
+
+        // if middle mouse button clicked send SecondaryActivate dbus event and do not show appindicator menu
+        if (event.get_button() === Clutter.BUTTON_MIDDLE) {"""
+new="""    vfunc_button_press_event(event) {
+        // NEXAURA FUSE: left/right both open custom tray via secondaryActivate (Python shows WebKit popup)
+        try {
+            if (this._indicator && this._indicator.id === "nexaura-fuse") {
+                if (Main.panel.menuManager.activeMenu)
+                    Main.panel.menuManager._closeMenu(true, Main.panel.menuManager.activeMenu);
+                this._indicator.secondaryActivate(event.get_time(), ...event.get_coords());
+                return Clutter.EVENT_STOP;
+            }
+        } catch(e) {}
+        if (this._waitDoubleClickPromise)
+            this._waitDoubleClickPromise.cancel();
+
+        // if middle mouse button clicked send SecondaryActivate dbus event and do not show appindicator menu
+        if (event.get_button() === Clutter.BUTTON_MIDDLE) {"""
+if old in t:
+    t=t.replace(old,new)
+    p.write_text(t)
+    print("patched")
+else:
+    print("old not found")
+'''
+                        _sp.run(["pkexec", "python3", "-c", patch_py], timeout=15)
+                        # Verify
+                        if "NEXAURA FUSE" in js_path.read_text():
+                            _log("Shell patch applied, will take effect after logout/restart")
+                        else:
+                            _log("Shell patch pkexec failed or already patched")
+                    except Exception as e:
+                        _log(f"Shell patch err {e}")
+                        _tb.print_exc()
+    except Exception as e:
+        try: _log(f"ensure_shell_patch outer err {e}")
+        except: pass
     try:
         import pystray
         from PIL import Image
@@ -248,10 +303,15 @@ def run_tray():
 
         def _show_custom_tray(*_):
             try:
+                _log(f"_show_custom_tray called args={_}")
+            except: pass
+            try:
                 from gi.repository import Gtk, Gdk, WebKit2, GLib
                 import cairo
                 win = custom_tray_win["win"]
                 if win and win.get_visible():
+                    try: _log("tray hide (was visible)")
+                    except: pass
                     win.hide()
                     return
                 if win:
@@ -407,55 +467,58 @@ def run_tray():
         # on X11 *does* expose 'activate' (left) and 'popup-menu' (right) separately, which is what
         # the user expects. We patch the pystray Gtk backend *before* creating the Icon so both
         # signals route to _show_custom_tray, and we use an empty menu so no native popup appears.
+        # Linux tray: keep native AppIndicator (visible in Zorin taskbar bottom) but make left/right both open custom
+        # instead of requiring second click. AppIndicator spec only exposes secondary-activate (middle) natively;
+        # we patch the GNOME Shell extension JS (indicatorStatusIcon.js) to route left/right through secondaryActivate,
+        # and set a Gtk.MenuItem as secondary-activate target that triggers _show_custom_tray.
+        # For X11 Gtk fallback (if user forces PYSTRAY_BACKEND=gtk) we also patch activate/popup.
         try:
             if sys.platform.startswith("linux"):
+                # If user explicitly forces Gtk, still handle it; otherwise keep AppIndicator as primary
                 try:
-                    # Patch Gtk backend class methods before instantiation
                     import pystray._gtk as _gtk_mod
                     def _fuse_gtk_activate(self, status_icon):
+                        try: _log("CLICK activate (left) -> show custom tray")
+                        except: pass
                         try:
-                            # GLib.idle_add to run on main loop thread
                             from gi.repository import GLib
-                            GLib.idle_add(_show_custom_tray)
-                        except:
-                            _show_custom_tray()
+                            GLib.idle_add(lambda: (_show_custom_tray(), False)[1])
+                        except: _show_custom_tray()
                     def _fuse_gtk_popup(self, status_icon, button, activate_time):
+                        try: _log(f"CLICK popup-menu (right) button={button} -> show custom tray")
+                        except: pass
                         try:
                             from gi.repository import GLib
-                            GLib.idle_add(_show_custom_tray)
-                        except:
-                            _show_custom_tray()
+                            GLib.idle_add(lambda: (_show_custom_tray(), False)[1])
+                        except: _show_custom_tray()
                     _gtk_mod.Icon._on_status_icon_activate = _fuse_gtk_activate
                     _gtk_mod.Icon._on_status_icon_popup_menu = _fuse_gtk_popup
-                    # If pystray selected AppIndicator, switch it to Gtk so clicks work directly
-                    if getattr(pystray.Icon, "__module__", "") == "pystray._appindicator":
+                    # Do NOT force switch to Gtk by default — AppIndicator is visible in bottom taskbar
+                    # Only switch if AppIndicator is unavailable and user wants Gtk explicitly via env
+                    if os.environ.get("PYSTRAY_BACKEND") == "gtk" and getattr(pystray.Icon, "__module__", "") == "pystray._appindicator":
                         pystray.Icon = _gtk_mod.Icon
-                        _log("Forced pystray backend to Gtk.StatusIcon for direct left/right clicks")
+                        _log("Forced Gtk.StatusIcon per PYSTRAY_BACKEND=gtk")
                 except Exception as e:
                     _log(f"Gtk patch warn: {e}")
-                    _tb.print_exc()
         except: pass
 
         # Cross-platform menu: Linux uses empty native menu because custom WebKit popup IS the menu.
         # Windows/macOS have no Gtk/WebKit tray window, so they keep a native pystray menu.
         is_linux = sys.platform.startswith("linux")
         if is_linux:
-            # Empty native menu: custom WebKit popup IS the menu. No "Show custom tray..." needed.
-            # On Gtk this means _menu_handle stays None -> no native popup at all.
-            # On AppIndicator fallback (Wayland) we keep at most an invisible fallback.
+            # Linux AppIndicator: keep a minimal native menu as fallback, but JS patch
+            # (indicatorStatusIcon.js) routes left/right directly to secondaryActivate -> _show_custom_tray,
+            # so native menu is never shown on single click. Menu item also serves as secondary target.
             try:
-                menu = pystray.Menu()  # intentionally empty
+                # One visible item ensures isReady (menuPath non-null) and provides secondary target
+                menu = pystray.Menu(
+                    pystray.MenuItem("NEXAURA FUSE", lambda i, it: _show_custom_tray(), default=True)
+                )
             except:
-                menu = None
-            # For AppIndicator fallback where empty still creates default, provide a hidden dummy
-            # that also opens custom (double-click on some shells). Keep reference.
-            if getattr(pystray.Icon, "__module__", "") == "pystray._appindicator":
                 try:
-                    menu = pystray.Menu(
-                        pystray.MenuItem("NEXAURA FUSE", lambda i, it: _show_custom_tray(), default=True, visible=False)
-                    )
-                except:
                     menu = pystray.Menu()
+                except:
+                    menu = None
         else:
             # Windows / macOS: native pystray menu (no Gtk custom window). Left/right both open it natively.
             # Directly expose useful actions; custom tray is Linux-only (Gtk).
@@ -496,24 +559,49 @@ def run_tray():
                     icon._status_icon.connect("button-press-event", lambda *_: _show_custom_tray())
                     icon._status_icon.connect("button-release-event", lambda *_: False)
                 except: pass
-            # AppIndicator fallback: intercept menu popup via GLib timeout
+            # AppIndicator: wire left/right (via secondaryActivate) to custom tray
             if hasattr(icon, "_appindicator"):
                 try:
-                    # If we are still on AppIndicator (e.g., Wayland where Gtk.StatusIcon not embedded),
-                    # hook the Gtk.Menu's 'show' to display custom and hide native.
-                    # Poll for _menu_handle after update_menu.
-                    def _hook_ai_menu():
+                    from gi.repository import Gtk, GLib
+                    def _setup_secondary(*_a):
                         try:
                             h = getattr(icon, "_menu_handle", None)
-                            if h is not None:
+                            if h is None:
+                                return False
+                            children = h.get_children()
+                            target = children[0] if children else None
+                            if target is None:
+                                # create hidden target
+                                target = Gtk.MenuItem.new_with_label("FUSE")
+                                target.show()
+                                h.append(target)
+                                h.show_all()
                                 try:
-                                    h.connect("show", lambda *_: (h.hide(), _show_custom_tray()))
-                                    h.connect("map", lambda *_: (h.hide(), _show_custom_tray()))
+                                    icon._appindicator.set_menu(h)
                                 except: pass
-                        except: pass
-                    from gi.repository import GLib
-                    GLib.timeout_add(300, lambda: (_hook_ai_menu(), False)[1])
-                except: pass
+                            # Ensure activate shows custom (idempotent)
+                            try:
+                                # Avoid duplicate connections by disconnecting previous
+                                pass
+                            except: pass
+                            try:
+                                target.connect("activate", lambda *_: ( _log("secondary activate -> custom tray") , GLib.idle_add(lambda: (_show_custom_tray(), False)[1]) ))
+                            except: pass
+                            try:
+                                icon._appindicator.set_secondary_activate_target(target)
+                                _log(f"secondary-activate target set to {target}")
+                            except Exception as e:
+                                _log(f"set_secondary_activate_target err {e}")
+                        except Exception as e:
+                            _log(f"secondary setup err {e}")
+                        return False
+                    # Delay to ensure _menu_handle is created and indicator isReady
+                    GLib.timeout_add(400, _setup_secondary)
+                    GLib.timeout_add(1200, _setup_secondary)
+                    GLib.timeout_add(2500, _setup_secondary)
+                except Exception as e:
+                    try: _log(f"secondary hook outer err {e}")
+                    except: pass
         except: pass
         # Watchdog in thread
         def watch():
